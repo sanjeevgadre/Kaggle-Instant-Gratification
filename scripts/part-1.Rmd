@@ -1,0 +1,60 @@
+---
+title: "Part I - EDA and LC"
+author: "Sanjeev Gadre"
+date: "September 24, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE)
+```
+
+Loading the required libraries
+
+```{r libraries}
+library(dplyr)
+library(ggplot2)
+library(ff)
+
+```
+
+Loading data
+
+```{r get-data}
+train = read.csv.ffdf(file = "../data/train.csv", VERBOSE = TRUE)
+n.train = nrow(train)
+p.train = ncol(train)
+
+```
+
+Loading utility functions
+
+```{r}
+
+```
+
+
+EDA - I
+
+```{r eda-1}
+colnames.train = colnames(train)
+colnames.train
+
+head(train[,1]); tail(train[,1])
+head(train[, 258]); tail(train[, 258])
+```
+
+1.  The first column is "id". The values of this column don't show any discernable patterns.
+2.  The last column is "target" and represents the classification lable value {0, 1}
+3.  The remaining 256 columns have *goofy* names and perhaps need to be replaced with something easier to work with.
+
+```{r pre-proc-1}
+colnames.train.new = colnames.train
+for (i in 2:257) {
+  colnames.train.new[i] = paste("var_", i-1, sep = "")
+}
+
+colnames(train) = colnames.train.new
+```
+
+
