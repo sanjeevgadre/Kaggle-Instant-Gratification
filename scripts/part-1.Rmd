@@ -15,38 +15,48 @@ Loading the required libraries
 library(dplyr)
 library(ggplot2)
 library(ff)
+library(ffbase)
 
 ```
 
 Loading data
 
 ```{r get-data}
-train = read.csv.ffdf(file = "../data/train.csv", VERBOSE = TRUE)
+train = read.csv.ffdf(file = "../data/train.csv")
+test = read.csv.ffdf(file = "../data/test.csv")
 n.train = nrow(train)
+n.test = nrow(test)
 p.train = ncol(train)
 
 ```
 
 Loading utility functions
 
-```{r}
-
+```{r utilitity-functions}
+save.ffdf(train, dir = "../RDA/traindir", overwrite = TRUE)
+save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE)
 ```
 
 
 EDA - I
 
 ```{r eda-1}
-colnames.train = colnames(train)
+colnames.train = colnames(train[,])
+print("The column names for the train dataset are:")
 colnames.train
 
+print("Sample values from the first column of the train dataset:")
 head(train[,1]); tail(train[,1])
+print("Sample values from the last column of the train dataset:")
 head(train[, 258]); tail(train[, 258])
 ```
 
-1.  The first column is "id". The values of this column don't show any discernable patterns.
-2.  The last column is "target" and represents the classification lable value {0, 1}
-3.  The remaining 256 columns have *goofy* names and perhaps need to be replaced with something easier to work with.
+1.  The first column is `id`. The values of this column don't show any discernable patterns.
+2.  The last column is `target` and represents the classification lable value {0, 1}
+3.  The remaining 256 columns have *goofy* names and need to be replaced with something easier to work with. This change will be made to both the *train* and *test* datasets.
+4.  We save the original column names for future reference.
+5.  Finally we ascertain if there are any NA values either in the *train* or the *test* subset.
+
 
 ```{r pre-proc-1}
 colnames.train.new = colnames.train
@@ -55,6 +65,10 @@ for (i in 2:257) {
 }
 
 colnames(train) = colnames.train.new
+colnames(test) = colnames.train.new[1:257]
+
+saveRDS(colnames.train, file = "../RDA/colnames.train.orig")
+
 ```
 
 
