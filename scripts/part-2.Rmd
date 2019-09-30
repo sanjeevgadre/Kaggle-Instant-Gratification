@@ -1,0 +1,60 @@
+---
+title: "Part II - Logistic Regression"
+author: "Sanjeev Gadre"
+date: "September 30, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE)
+```
+
+Loading the required libraries
+
+```{r libraries}
+library(dplyr)
+library(ggplot2)
+library(ff)
+library(ffbase)
+
+```
+
+Loading utility functions
+
+```{r utilitity-functions}
+save.ffdf(train, dir = "../RDA/traindir", overwrite = TRUE)
+save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE)
+
+train = load.ffdf(dir = "../RDA/traindir")
+    train = train[["train"]]
+test = load.ffdf(dir = "../RDA/testdir")
+    test = test[["test"]]
+```
+
+Loading data
+
+```{r get-data}
+train = read.csv.ffdf(file = "../data/train.csv")
+test = read.csv.ffdf(file = "../data/test.csv")
+n.train = nrow(train)
+n.test = nrow(test)
+p.train = ncol(train)
+
+```
+
+Mini-batch Logistic Regression
+
+```{r sampling}
+indx = sample(1:10, n.train, replace = TRUE)
+
+i = 1
+train.train = as.ffdf(train[indx != i,])
+train.cval = as.ffdf(train[indx == i,])
+close.ffdf(train)
+rm(train)
+gc()
+
+```
+
+
+
