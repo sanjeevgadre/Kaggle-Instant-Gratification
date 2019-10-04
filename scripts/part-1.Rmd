@@ -17,18 +17,23 @@ library(ggplot2)
 library(ff)
 library(ffbase)
 
+# Creating ffdir where ff objects can be stored and retrieved
+ffdir = paste(getwd(), "/ffdir", sep = "")
+if (!dir.exists(ffdir)){dir.create(ffdir)}
+
 ```
+
 
 Loading utility functions
 
 ```{r utilitity-functions}
-save.ffdf(train, dir = "../RDA/traindir", overwrite = TRUE)
-save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE)
+save.ffdf(train, dir = ffdir, overwrite = TRUE)
+save.ffdf(test, dir = ffdir, overwrite = TRUE)
 
-train = load.ffdf(dir = "../RDA/traindir")
+train = load.ffdf(dir = ffdir)
     train = train[["train"]]
     open.ffdf(train)
-test = load.ffdf(dir = "../RDA/testdir")
+test = load.ffdf(dir = ffdir)
     test = test[["test"]]
     open.ffdf(test)
 ```
@@ -56,12 +61,12 @@ print(paste("The number of training examples:", n.train))
 print(paste("The number of test examples:", n.test))
 print(paste("The number of features:", p-1))
 
-train.na.data = sapply(physical(train), function(x){sum(is.na(x))})
-test.na.data = sapply(physical(train), function(x){sum(is.na(x))})
+train.na.data = sapply(train[,], function(x){sum(is.na(x))})
+test.na.data = sapply(test[,], function(x){sum(is.na(x))})
 writeLines("Columns in the train dataset reporting NA values\n")
 train.na.data[train.na.data != 0]
 writeLines("\nColumns in the test dataset reporting NA values\n")
-train.na.data[train.na.data != 0]
+test.na.data[test.na.data != 0]
 
 writeLines("The proportion of the two labels in the train datset is:")
 table(train[, "target"]) %>% prop.table() %>% round(digits = 4)
@@ -101,15 +106,21 @@ tibble::enframe(levels(train[,1]))
 
 ```{r pre-proc-1}
 train.id.val = train$id
-y = train$target
-train = subset(train[,], select = -c(id, target))
+ffsave(train.id.val, file = paste(ffdir, "/train.id.val", sep = ""), rootpath = getOption("fftempdir"))
+rm(train.id.val); gc()
+
+train.y = train$target
+ffsave(train.y, file = paste(ffdir, "/train.y", sep = ""), rootpath = getOption("fftempdir"))
+train = subset.ffdf(train, select = -c(id, target))
 
 min_val = min(train[, "wheezy.copper.turtle.magic"]); max_val = max(train[, "wheezy.copper.turtle.magic"])
 train$wheezy.copper.turtle.magic = (17-(-17))*(train$wheezy.copper.turtle.magic - min_val)/(max_val - min_val) + (-17)
 
 test.id.val = test$id
-test = subset(test[,], select=-id)
-train$wheezy.copper.turtle.magic = (17-(-17))*(train$wheezy.copper.turtle.magic - min_val)/(max_val - min_val) + (-17)
+ffsave(test.id.val, file = paste(ffdir, "/test.id.val", sep = ""), rootpath = getOption("fftempdir"))
+rm(test.id.val); gc()
+test = subset.ffdf(test, select=-id)
+test$wheezy.copper.turtle.magic = (17-(-17))*(test$wheezy.copper.turtle.magic - min_val)/(max_val - min_val) + (-17)
 
 
 ```
