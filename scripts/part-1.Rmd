@@ -33,58 +33,103 @@ test = load.ffdf(dir = "../RDA/testdir")
     open.ffdf(test)
 ```
 
-Loading data
+### Getting data
 
 ```{r get-data}
 train = read.csv.ffdf(file = "../data/train.csv")
 test = read.csv.ffdf(file = "../data/test.csv")
 n.train = nrow(train)
 n.test = nrow(test)
-p.train = ncol(train)
+p = ncol(train)
 
 ```
 
-EDA - I
+### EDA - I
+
+1.  We get the dimensions of the *train* and *test* dataset.
+2.  We ascertain if there are `NA` values in the two datasets and if there are then the frequency of the `NA` across the columns.
+3.  We look for the proportion of the `target` labels in the *train* dataset.
+4.  Finally, we get some summary statistics on the data in each column of the *train* dataset
 
 ```{r eda-1}
-colnames.train = colnames(train[,])
-writeLines("The column names for the train dataset are:\n")
-colnames.train
+print(paste("The number of training examples:", n.train))
+print(paste("The number of test examples:", n.test))
+print(paste("The number of features:", p-1))
 
-writeLines("\nSample values from the first column of the train dataset:\n")
-head(train[,1]); tail(train[,1])
-writeLines("\nSample values from the last column of the train dataset:\n")
-head(train[, 258]); tail(train[, 258])
-```
-
-1.  The first column is `id`. The values of this column don't show any discernable patterns.
-2.  The last column is `target` and represents the classification lable value {0, 1}
-3.  We ascertain if there are any NA values either in the *train* or the *test* subset.
-
-
-```{r eda-2}
 train.na.data = sapply(physical(train), function(x){sum(is.na(x))})
 test.na.data = sapply(physical(train), function(x){sum(is.na(x))})
-
 writeLines("Columns in the train dataset reporting NA values\n")
 train.na.data[train.na.data != 0]
 writeLines("\nColumns in the test dataset reporting NA values\n")
 train.na.data[train.na.data != 0]
 
-```
-
-1.  There are no NA values in either the *train* or the *test* dataset.
-2.  We look for the proportion of the two labels in the *train* dataset.
-3.  We look for co-relation amongst the columns of the *train* dataset
-3.  We save the `ffdf` datasets for future use.
-
-```{r eda-3}
 writeLines("The proportion of the two labels in the train datset is:")
 table(train[, "target"]) %>% prop.table() %>% round(digits = 4)
 
+eda.mat = matrix(rep(NA, p*4), ncol = 4)
+colnames(eda.mat) = c("Name", "Class", "Min Val", "Max Val")
+for (i in 1:p) {
+  eda.mat[i, 1] = colnames(train)[i]
+  eda.mat[i, 2] = class(train[,i])
+  if (!is.factor(train[, i])) {
+    eda.mat[i, 3] = min(train[, i], na.rm = FALSE)
+    eda.mat[i, 4] = max(train[, i], na.rm = FALSE)
+  }
+
+}
+writeLines("Summary of all non-factor columns of train dataset\n")
+as_tibble(eda.mat)
+
+writeLines("\nLevels of the id column of train dataset")
+tibble::enframe(levels(train[,1]))
 ```
 
-1.  The two categories are almost equally represented in the *train* dataset.
+**Observations**
+
+1.  There are no NA values in either the *train* or the *test* dataset.
+2.  The two categories are almost equally represented in the *train* dataset.
+3.  The first column is `id`. The values of this column don't show any discernable patterns.
+4.  The last column is `target` and represents the classification lable value {0, 1}
+5.  All other columns/features are `numeric` in class and but for one (*wheezy.copper.turtle.magic*), report values in comparable ranges
+
+### Pre-process-1
+
+1.  We save the `id` column separately for future reference but drop it from the *train* dataset.
+2.  We separate the `target` column from the dataset.
+3.  We scale the *wheezy.copper.turtle.magic* column to a range (-17, 17) so that all features are within comparabe ranges.
+4.  We repeat steps 1&3 above for the *test* dataset
+
+```{r pre-proc-1}
+train.id.val = train$id
+y = train$target
+train = subset(train[,], select = -c(id, target))
+
+min_val = min(train[, "wheezy.copper.turtle.magic"]); max_val = max(train[, "wheezy.copper.turtle.magic"])
+train$wheezy.copper.turtle.magic = (17-(-17))*(train$wheezy.copper.turtle.magic - min_val)/(max_val - min_val) + (-17)
+
+test.id.val = test$id
+test = subset(test[,], select=-id)
+train$wheezy.copper.turtle.magic = (17-(-17))*(train$wheezy.copper.turtle.magic - min_val)/(max_val - min_val) + (-17)
+
+
+```
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+```{r eda-3}
+
+
+#num.cols = sapply(train[,], is.factor)
+cormat = matrix(rep(0, 258*258), ncol = 258)
+for (i in 2:256) {#256
+  for (j in (i+1):257) {#257
+    cormat[i,j] = cor(train[, i], train[, j])
+  }
+}
+
+```
+
+1.  
 2.  We add a dummy `target` column to the *test* dataset and then combine the *train* and *test* dataset.
 3.  We scale the combined dataset and then re-split them into two separate datasets
 
