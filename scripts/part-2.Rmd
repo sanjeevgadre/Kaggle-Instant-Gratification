@@ -1,7 +1,7 @@
 ---
-title: "Part II - Logistic Regression"
+title: "Part II - Mini Batch Gradient Descent"
 author: "Sanjeev Gadre"
-date: "September 30, 2019"
+date: "October 09, 2019"
 output: html_document
 ---
 
@@ -17,7 +17,12 @@ library(ggplot2)
 library(ff)
 library(ffbase)
 
+# Creating ffdir where ff objects can be stored and retrieved
+ffdir = paste(getwd(), "/ffdir", sep = "")
+if (!dir.exists(ffdir)){dir.create(ffdir)}
+
 ```
+
 
 Loading utility functions
 
@@ -27,34 +32,132 @@ save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE)
 
 train = load.ffdf(dir = "../RDA/traindir")
     train = train[["train"]]
+    open.ffdf(train)
 test = load.ffdf(dir = "../RDA/testdir")
     test = test[["test"]]
+    open.ffdf(test)
+    
+train.y = ffload(paste(ffdir, "/train.y", sep = ""))
 ```
 
-Loading data
+### Getting data
 
 ```{r get-data}
 train = read.csv.ffdf(file = "../data/train.csv")
 test = read.csv.ffdf(file = "../data/test.csv")
 n.train = nrow(train)
 n.test = nrow(test)
-p.train = ncol(train)
+p = ncol(train)
 
 ```
 
-Mini-batch Logistic Regression
+### EDA - I
 
-```{r sampling}
-indx = sample(1:10, n.train, replace = TRUE)
+1.  We get the dimensions of the *train* and *test* dataset.
+2.  We ascertain if there are `NA` values in the two datasets and if there are then, ascertain the frequency of the `NA` by column.
+3.  We look for the proportion of the `target` labels in the *train* dataset.
+4.  Finally, we get some summary statistics on the data in each column of the *train* dataset
 
-i = 1
-train.train = as.ffdf(train[indx != i,])
-train.cval = as.ffdf(train[indx == i,])
-close.ffdf(train)
-rm(train)
-gc()
+```{r eda-1}
+print(paste("The number of training examples:", n.train))
+print(paste("The number of test examples:", n.test))
+print(paste("The number of features:", p-1))
+
+train.na.data = sapply(train[,], function(x){sum(is.na(x))})
+test.na.data = sapply(test[,], function(x){sum(is.na(x))})
+writeLines("Columns in the train dataset reporting NA values\n")
+train.na.data[train.na.data != 0]
+writeLines("\nColumns in the test dataset reporting NA values\n")
+test.na.data[test.na.data != 0]
+
+writeLines("The proportion of the two labels in the train datset is:")
+table(train[, "target"]) %>% prop.table() %>% round(digits = 4)
+
+eda.mat = matrix(rep(NA, p*4), ncol = 4)
+colnames(eda.mat) = c("Name", "Class", "Min Val", "Max Val")
+for (i in 1:p) {
+  eda.mat[i, 1] = colnames(train)[i]
+  eda.mat[i, 2] = class(train[,i])
+  if (!is.factor(train[, i])) {
+    eda.mat[i, 3] = min(train[, i], na.rm = FALSE)
+    eda.mat[i, 4] = max(train[, i], na.rm = FALSE)
+  }
+
+}
+writeLines("Summary of all non-factor columns of train dataset\n")
+as_tibble(eda.mat)
+
+writeLines("\nLevels of the id column of train dataset")
+tibble::enframe(levels(train[,1]))
+```
+
+**Observations**
+
+1.  There are no NA values in either the *train* or the *test* dataset.
+2.  The two categories are almost equally represented in the *train* dataset.
+3.  The first column is `id`. The values of this column don't show any discernable pattern.
+4.  The last column is `target` and represents the classification lable value {0, 1}
+5.  All other columns/features are `numeric` in class, and, but for one (*wheezy.copper.turtle.magic*), report values in comparable ranges
+
+### Pre-process-1
+
+1.  We save the `id` column separately for future reference but drop it from the *train* dataset.
+2.  We separate the `target` column from the dataset.
+3.  We scale the *wheezy.copper.turtle.magic* column to a range (-17, 17) so that all features are within comparabe ranges.
+4.  We repeat steps 1&3 above for the *test* dataset
+
+```{r pre-proc-1}
+train.id.val = train$id
+ffsave(train.id.val, file = paste(ffdir, "/train.id.val", sep = ""), rootpath = getOption("fftempdir"))
+rm(train.id.val); gc()
+
+train.y = train$target
+ffsave(train.y, file = paste(ffdir, "/train.y", sep = ""), rootpath = getOption("fftempdir"))
+train = subset.ffdf(train, select = -c(id, target))
+
+min_val = min(train[, "wheezy.copper.turtle.magic"]); max_val = max(train[, "wheezy.copper.turtle.magic"])
+train$wheezy.copper.turtle.magic = (17-(-17))*(train$wheezy.copper.turtle.magic - min_val)/(max_val - min_val) + (-17)
+
+test.id.val = test$id
+ffsave(test.id.val, file = paste(ffdir, "/test.id.val", sep = ""), rootpath = getOption("fftempdir"))
+rm(test.id.val); gc()
+test = subset.ffdf(test, select=-id)
+test$wheezy.copper.turtle.magic = (17-(-17))*(test$wheezy.copper.turtle.magic - min_val)/(max_val - min_val) + (-17)
+
 
 ```
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+<!-- ```{r eda-3} -->
+
+
+<!-- #num.cols = sapply(train[,], is.factor) -->
+<!-- cormat = matrix(rep(0, 258*258), ncol = 258) -->
+<!-- for (i in 2:256) {#256 -->
+<!--   for (j in (i+1):257) {#257 -->
+<!--     cormat[i,j] = cor(train[, i], train[, j]) -->
+<!--   } -->
+<!-- } -->
+
+<!-- ``` -->
+
+<!-- 1.   -->
+<!-- 2.  We add a dummy `target` column to the *test* dataset and then combine the *train* and *test* dataset. -->
+<!-- 3.  We scale the combined dataset and then re-split them into two separate datasets -->
+
+<!-- ```{r baseline-1} -->
+<!-- test$target = as.ff(rep(0, times = n.test)) -->
+<!-- dat = ffdfappend(train, test) # Equivalent of rbind -->
+<!-- rm(test, train) -->
+<!-- gc() -->
+
+<!-- dat.scaled = as.ffdf(sapply(dat[, 2:257], scale)) -->
+
+<!-- save.ffdf(train, dir = "../RDA/traindir", overwrite = TRUE) -->
+<!-- save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE) -->
+
+<!-- rm(list = ls()) -->
+<!-- gc() -->
+<!-- ``` -->
 

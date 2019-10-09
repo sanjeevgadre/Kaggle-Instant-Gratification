@@ -27,13 +27,13 @@ if (!dir.exists(ffdir)){dir.create(ffdir)}
 Loading utility functions
 
 ```{r utilitity-functions}
-save.ffdf(train, dir = ffdir, overwrite = TRUE)
-save.ffdf(test, dir = ffdir, overwrite = TRUE)
+save.ffdf(train, dir = "../RDA/traindir", overwrite = TRUE)
+save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE)
 
-train = load.ffdf(dir = ffdir)
+train = load.ffdf(dir = "../RDA/traindir")
     train = train[["train"]]
     open.ffdf(train)
-test = load.ffdf(dir = ffdir)
+test = load.ffdf(dir = "../RDA/testdir")
     test = test[["test"]]
     open.ffdf(test)
 ```
@@ -52,7 +52,7 @@ p = ncol(train)
 ### EDA - I
 
 1.  We get the dimensions of the *train* and *test* dataset.
-2.  We ascertain if there are `NA` values in the two datasets and if there are then the frequency of the `NA` across the columns.
+2.  We ascertain if there are `NA` values in the two datasets and if there are then, ascertain the frequency of the `NA` by column.
 3.  We look for the proportion of the `target` labels in the *train* dataset.
 4.  Finally, we get some summary statistics on the data in each column of the *train* dataset
 
@@ -93,9 +93,9 @@ tibble::enframe(levels(train[,1]))
 
 1.  There are no NA values in either the *train* or the *test* dataset.
 2.  The two categories are almost equally represented in the *train* dataset.
-3.  The first column is `id`. The values of this column don't show any discernable patterns.
+3.  The first column is `id`. The values of this column don't show any discernable pattern.
 4.  The last column is `target` and represents the classification lable value {0, 1}
-5.  All other columns/features are `numeric` in class and but for one (*wheezy.copper.turtle.magic*), report values in comparable ranges
+5.  All other columns/features are `numeric` in class, and, but for one (*wheezy.copper.turtle.magic*), report values in comparable ranges
 
 ### Pre-process-1
 
@@ -127,35 +127,35 @@ test$wheezy.copper.turtle.magic = (17-(-17))*(test$wheezy.copper.turtle.magic - 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-```{r eda-3}
+<!-- ```{r eda-3} -->
 
 
-#num.cols = sapply(train[,], is.factor)
-cormat = matrix(rep(0, 258*258), ncol = 258)
-for (i in 2:256) {#256
-  for (j in (i+1):257) {#257
-    cormat[i,j] = cor(train[, i], train[, j])
-  }
-}
+<!-- #num.cols = sapply(train[,], is.factor) -->
+<!-- cormat = matrix(rep(0, 258*258), ncol = 258) -->
+<!-- for (i in 2:256) {#256 -->
+<!--   for (j in (i+1):257) {#257 -->
+<!--     cormat[i,j] = cor(train[, i], train[, j]) -->
+<!--   } -->
+<!-- } -->
 
-```
+<!-- ``` -->
 
-1.  
-2.  We add a dummy `target` column to the *test* dataset and then combine the *train* and *test* dataset.
-3.  We scale the combined dataset and then re-split them into two separate datasets
+<!-- 1.   -->
+<!-- 2.  We add a dummy `target` column to the *test* dataset and then combine the *train* and *test* dataset. -->
+<!-- 3.  We scale the combined dataset and then re-split them into two separate datasets -->
 
-```{r baseline-1}
-test$target = as.ff(rep(0, times = n.test))
-dat = ffdfappend(train, test) # Equivalent of rbind
-rm(test, train)
-gc()
+<!-- ```{r baseline-1} -->
+<!-- test$target = as.ff(rep(0, times = n.test)) -->
+<!-- dat = ffdfappend(train, test) # Equivalent of rbind -->
+<!-- rm(test, train) -->
+<!-- gc() -->
 
-dat.scaled = as.ffdf(sapply(dat[, 2:257], scale))
+<!-- dat.scaled = as.ffdf(sapply(dat[, 2:257], scale)) -->
 
-save.ffdf(train, dir = "../RDA/traindir", overwrite = TRUE)
-save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE)
+<!-- save.ffdf(train, dir = "../RDA/traindir", overwrite = TRUE) -->
+<!-- save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE) -->
 
-rm(list = ls())
-gc()
-```
+<!-- rm(list = ls()) -->
+<!-- gc() -->
+<!-- ``` -->
 
