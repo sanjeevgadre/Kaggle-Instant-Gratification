@@ -1,7 +1,7 @@
 ---
-title: "Part II - Mini Batch Gradient Descent"
+title: "Part II - Ascertainig Multi-collinearity"
 author: "Sanjeev Gadre"
-date: "October 09, 2019"
+date: "October 23, 2019"
 output: html_document
 ---
 
@@ -30,134 +30,295 @@ Loading utility functions
 save.ffdf(train, dir = "../RDA/traindir", overwrite = TRUE)
 save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE)
 
-train = load.ffdf(dir = "../RDA/traindir")
-    train = train[["train"]]
-    open.ffdf(train)
 test = load.ffdf(dir = "../RDA/testdir")
     test = test[["test"]]
     open.ffdf(test)
     
-train.y = ffload(paste(ffdir, "/train.y", sep = ""))
+
+```
+
+### Functions for Mini-batch Gradient Descent
+
+```{r gradient-descent-functions}
+param.init = function (p.in, p.out){
+  set.seed(1970)
+ 
+  W = matrix(runif(p.in*p.out)*0.1, nrow = p.in)
+  b = rep(0, p.out)
+  
+  param.cache = list("W" = W, "b" = b)
+
+  return(param.cache)
+}
+
+fwd.prop.sigmoid = function(A.in, param.cache){
+  epsilon = 10^-7
+  m = nrow(A.in)
+  W = param.cache[["W"]]
+  b = param.cache[["b"]]
+  B = matrix(rep(b, m), nrow = m)             # Because R does not support "broadcast"
+  
+  Z = A.in %*% W + B   
+  A.out = 1/(1+exp(-Z))
+  # Scaling A.out from [0,1] to [epsilon, 1-epsilon] to avoid NaN's in cost calculation
+  A.out = epsilon + A.out*(1-2*epsilon)   
+  
+  return(A.out)
+}
+
+# lambda value needs to be passed if cost regularization is desired
+cost.fn.sigmoid = function(Y, Y.hat, param.cache, lambda = 0){
+  m = nrow(Y.hat)
+  W = param.cache[["W"]]
+  
+  J = (-1/m)*sum(Y*log(Y.hat) + (1-Y)*log(1-Y.hat)) + (lambda/(2*m))*sum(W^2)
+  return(J)
+}
+
+grad.cache.init = function(param.cache, acc = "none") {
+  
+  W = param.cache[["W"]]
+  dW = matrix(rep(0, nrow(W)*ncol(W)), nrow = nrow(W))
+  db = 0
+  grad.cache = list("dW" = dW, "db" = db)
+  
+  if (acc == "momentum") {
+    VdW = matrix(rep(0, nrow(W)*ncol(W)), nrow = nrow(W))
+    Vdb = 0
+
+    grad.cache = append(grad.cache, list("VdW" = VdW, "Vdb" = Vdb))
+  }
+
+  if (acc == "rmsprop") {
+    SdW = matrix(rep(0, nrow(W)*ncol(W)), nrow = nrow(W))
+    Sdb = 0
+
+    grad.cache = append(grad.cache, list("SdW" = SdW, "Sdb" = Sdb))
+  }
+
+  if (acc == "adam") {
+    VdW = matrix(rep(0, nrow(W)*ncol(W)), nrow = nrow(W))
+    Vdb = 0
+    SdW = matrix(rep(0, nrow(W)*ncol(W)), nrow = nrow(W))
+    Sdb = 0
+
+    grad.cache = append(grad.cache, list("VdW" = VdW, "Vdb" = Vdb, "SdW" = SdW, "Sdb" = Sdb))
+  }
+  
+  return(grad.cache)
+}
+
+bwd.prop.sigmoid = function(X, Y, A.out, param.cache, grad.cache, lambda = 0, beta1 = 0.9, beta2 = 0.999){
+  m = nrow(A.out)
+  W = param.cache[["W"]]
+  VdW = grad.cache[["VdW"]];    Vdb = grad.cache[["Vdb"]]
+  SdW = grad.cache[["SdW"]];    Sdb = grad.cache[["Sdb"]]
+  
+  dZ = A.out - Y
+  dW = (1/m)*(t(X) %*% dZ) + (lambda/m)*W
+  db = (1/m)*apply(dZ, 2, sum)
+  
+  grad.cache[["dW"]] = dW
+  grad.cache[["db"]] = db
+  
+  if (!is.null(VdW) && is.null(SdW)) {                    # Gradient Descent with momentum
+    VdW = beta1*VdW + (1-beta1)*dW
+    Vdb = beta1*Vdb + (1-beta1)*db
+    grad.cache[["VdW"]] = VdW ;   grad.cache[["Vdb"]] = Vdb
+  }
+  
+  if (is.null(VdW) && !is.null(SdW)) {                    # Gradient Descent with RMSprop
+    SdW = beta2*SdW + (1-beta2)*dW^2
+    Sdb = beta2*Sdb + (1-beta2)*db^2
+    grad.cache[["SdW"]] = SdW ;   grad.cache[["Sdb"]] = Sdb
+  }
+  
+  if (!is.null(VdW) && !is.null(SdW)) {                   # Gradient Descent with Adam
+    VdW = grad.cache[["VdW"]]; Vdb = grad.cache[["Vdb"]]
+    VdW = beta1*VdW + (1-beta1)*dW
+    Vdb = beta1*Vdb + (1-beta1)*db
+    grad.cache[["VdW"]] = VdW ;   grad.cache[["Vdb"]] = Vdb
+    
+    SdW = grad.cache[["SdW"]]; Sdb = grad.cache[["Sdb"]]
+    SdW = beta2*SdW + (1-beta2)*dW^2
+    Sdb = beta2*Sdb + (1-beta2)*db^2
+    grad.cache[["SdW"]] = SdW ;   grad.cache[["Sdb"]] = Sdb
+  }
+  
+  return(grad.cache)
+}
+
+params.update = function(alpha, grad.cache, param.cache, beta1 = 0.9, beta2 = 0.999, t = 10^8){
+  
+  W = param.cache[["W"]];    b = param.cache[["b"]]
+  dW = grad.cache[["dW"]];    db = grad.cache[["db"]]
+  VdW = grad.cache[["VdW"]];  Vdb = grad.cache[["Vdb"]]
+  SdW = grad.cache[["SdW"]];  Sdb = grad.cache[["Sdb"]]
+  
+  if (is.null(VdW) && is.null(SdW)) {                     # Standard Gradient Descent 
+    W = W - alpha*dW
+    b = b - alpha*db
+    
+    param.cache[["W"]] = W;  param.cache[["b"]] = b
+  }
+  
+  if (!is.null(VdW) && is.null(SdW)) {                    # Gradient Descent with momentum
+    W = W - alpha*VdW
+    b = b - alpha*Vdb
+    
+    param.cache[["W"]] = W;  param.cache[["b"]] = b
+  }
+  
+  if (is.null(VdW) && !is.null(SdW)) {                    # Gradient Descent with RMSprop
+    W = W - alpha*dW/(sqrt(SdW) + 10^-8)                  # 10^-8 added to avoid division by zero
+    b = b - alpha*db/(sqrt(Sdb) + 10^-8)
+    
+    param.cache[["W"]] = W;  param.cache[["b"]] = b
+  }
+  
+  if (!is.null(VdW) && !is.null(SdW)) {                   # Gradient Descent with Adam
+    VdW = VdW/(1-beta1^t);    Vdb = Vdb/(1-beta1^1)
+    SdW = SdW/(1-beta2^t);    Sdb = Sdb/(1-beta2^1)       # Correcting for running count of mini-batch
+    
+    
+    W = W - alpha*VdW/(sqrt(SdW) + 10^-8)                 
+    b = b - alpha*Vdb/(sqrt(Sdb) + 10^-8)
+    
+    param.cache[["W"]] = W;  param.cache[["b"]] = b
+  }
+  
+  return(param.cache)
+}
+
+
 ```
 
 ### Getting data
 
 ```{r get-data}
-train = read.csv.ffdf(file = "../data/train.csv")
-test = read.csv.ffdf(file = "../data/test.csv")
-n.train = nrow(train)
-n.test = nrow(test)
-p = ncol(train)
+train = load.ffdf(dir = "../RDA/traindir")
+train = train[["train"]]
+open.ffdf(train)
+#ffload(paste(ffdir, "/train.y", sep = ""))
+
 
 ```
 
-### EDA - I
+```{r temp}
+feat = 1
+m = nrow(train)                                               # number of training examples
 
-1.  We get the dimensions of the *train* and *test* dataset.
-2.  We ascertain if there are `NA` values in the two datasets and if there are then, ascertain the frequency of the `NA` by column.
-3.  We look for the proportion of the `target` labels in the *train* dataset.
-4.  Finally, we get some summary statistics on the data in each column of the *train* dataset
+# To find the VIF, we regress every independent variable on all other independent variables.
+# Therefore, for these regressions, the number of features in input layer will 255
+p.in = ncol(train) - 1                                        # number of features in input layer
+p.out = 1                                                     # number of features in output layer
 
-```{r eda-1}
-print(paste("The number of training examples:", n.train))
-print(paste("The number of test examples:", n.test))
-print(paste("The number of features:", p-1))
+alpha = 0.005                                                 # learning rate
+epochs = 1                                                 # number of epochs
+lambda = 0.02                                                 # regularization penalty
+acc = "momentum"                                                  # gradient descent accelaration algorithm
+beta1 = 0.9                                                   # gradient descent accelaration algorithm parameter
+beta2 = 0.999                                                 # gradient descent accelaration algorithm parameter
+mini.bat.sz = 64                                              # mini-batch size
+t = 1                                                         # running count of mini-batches across epochs.
+                                                              # used for Adam accelaration
 
-train.na.data = sapply(train[,], function(x){sum(is.na(x))})
-test.na.data = sapply(test[,], function(x){sum(is.na(x))})
-writeLines("Columns in the train dataset reporting NA values\n")
-train.na.data[train.na.data != 0]
-writeLines("\nColumns in the test dataset reporting NA values\n")
-test.na.data[test.na.data != 0]
 
-writeLines("The proportion of the two labels in the train datset is:")
-table(train[, "target"]) %>% prop.table() %>% round(digits = 4)
+param.cache = param.init(p.in, p.out)                         # initializing the weights
+grad.cache = grad.cache.init(param.cache)                     # initializing the gradients
+cost.cache = list("cost" = NULL, "iter" = NULL)              # list to save costs periodically
+mini.bat.nos = m %/% mini.bat.sz                              # Calculating the number of full mini-batches
 
-eda.mat = matrix(rep(NA, p*4), ncol = 4)
-colnames(eda.mat) = c("Name", "Class", "Min Val", "Max Val")
-for (i in 1:p) {
-  eda.mat[i, 1] = colnames(train)[i]
-  eda.mat[i, 2] = class(train[,i])
-  if (!is.factor(train[, i])) {
-    eda.mat[i, 3] = min(train[, i], na.rm = FALSE)
-    eda.mat[i, 4] = max(train[, i], na.rm = FALSE)
+# i = 1
+# e = 1
+
+```
+
+
+### Calculating VIF
+
+```{r calc-vif}
+timestamp()
+
+for (e in 1:epochs) {
+  set.seed(e)
+  indx = sample(1:m, m)
+  
+  for (i in 1:mini.bat.nos) {
+    
+    end = i*mini.bat.sz
+    beg = end - mini.bat.sz + 1
+    mini.indx = indx[beg:end]
+    
+    X.mini = train[mini.indx, -feat] %>% as.matrix()                              # Forming the mini-batch
+    Y.mini = train[mini.indx, feat] %>% as.matrix()
+    
+    A.out = fwd.prop.sigmoid(X.mini, param.cache)                                 # Forward Propagation
+    
+    cost = cost.fn.sigmoid(Y.mini, A.out, param.cache)                            # Calculate the cost function
+    
+    # if (cost <= 0) {
+    #   stop("Cost is now negative. Stopping")
+    # }
+    
+    if (i %% 400 == 0) {
+      print(paste("Working on mini-batch: ", i))
+      cost.cache$cost = append(cost.cache$cost, cost)
+      cost.cache$iter = append(cost.cache$iter, t)
+    }
+    
+    grad.cache = bwd.prop.sigmoid(X.mini, Y.mini, A.out, param.cache, grad.cache) # Backward Propagation
+    
+    param.cache = params.update(alpha, grad.cache, param.cache)                   # Updating the weights
+    
+    
+    
+    t = t + 1
   }
-
+  
+  if (m %% mini.bat.sz != 0) {          # Accounting for the non-full-sized mini-batch
+    
+    print("Working on non-full-sized mini-batch")
+    
+    beg = mini.bat.nos*mini.bat.sz + 1
+    end = m
+    
+    X.mini = X[indx[beg:end], ]
+    Y.mini = Y[indx[beg:end]]
+    
+    A.out = fwd.prop.sigmoid(X.mini, param.cache)                                 # Forward Propagation
+    
+    # cost = cost.fn.sigmoid(Y.mini, A.out, param.cache)                            # Calculate the cost function
+    # cost.cache$cost = append(cost.cache$cost, cost)
+    # cost.cache$iter = append(cost.cache$iter, t)
+    # if (cost <= 0) {
+    #   stop("Cost is now negative. Stopping")
+    # }
+    
+    grad.cache = bwd.prop.sigmoid(X.mini, Y.mini, A.out, param.cache, grad.cache) # Backward Propagation
+    
+    param.cache = params.update(alpha, grad.cache, param.cache)                  # Updating the weights
+    
+    
+    
+    t = t + 1
+  }
+  
+  # if (e %% 100 == 0) {
+  #   cost.cache$cost = append(cost.cache$cost, cost)                         # Recording the cost periodically
+  #   cost.cache$epoch = append(cost.cache$epoch, e)
+  # }
 }
-writeLines("Summary of all non-factor columns of train dataset\n")
-as_tibble(eda.mat)
 
-writeLines("\nLevels of the id column of train dataset")
-tibble::enframe(levels(train[,1]))
-```
 
-**Observations**
+timestamp()
+# writeLines("\nW =")
+# param.cache[["W"]]
+# writeLines("\nb = ")
+# param.cache[["b"]]
 
-1.  There are no NA values in either the *train* or the *test* dataset.
-2.  The two categories are almost equally represented in the *train* dataset.
-3.  The first column is `id`. The values of this column don't show any discernable pattern.
-4.  The last column is `target` and represents the classification lable value {0, 1}
-5.  All other columns/features are `numeric` in class, and, but for one (*wheezy.copper.turtle.magic*), report values in comparable ranges
-
-### Pre-process-1
-
-1.  We save the `id` column separately for future reference but drop it from the *train* dataset.
-2.  We separate the `target` column from the dataset.
-3.  We scale the *wheezy.copper.turtle.magic* column to a range (-17, 17) so that all features are within comparabe ranges.
-4.  We repeat steps 1&3 above for the *test* dataset
-
-```{r pre-proc-1}
-train.id.val = train$id
-ffsave(train.id.val, file = paste(ffdir, "/train.id.val", sep = ""), rootpath = getOption("fftempdir"))
-rm(train.id.val); gc()
-
-train.y = train$target
-ffsave(train.y, file = paste(ffdir, "/train.y", sep = ""), rootpath = getOption("fftempdir"))
-train = subset.ffdf(train, select = -c(id, target))
-
-min_val = min(train[, "wheezy.copper.turtle.magic"]); max_val = max(train[, "wheezy.copper.turtle.magic"])
-train$wheezy.copper.turtle.magic = (17-(-17))*(train$wheezy.copper.turtle.magic - min_val)/(max_val - min_val) + (-17)
-
-test.id.val = test$id
-ffsave(test.id.val, file = paste(ffdir, "/test.id.val", sep = ""), rootpath = getOption("fftempdir"))
-rm(test.id.val); gc()
-test = subset.ffdf(test, select=-id)
-test$wheezy.copper.turtle.magic = (17-(-17))*(test$wheezy.copper.turtle.magic - min_val)/(max_val - min_val) + (-17)
+plot(x = cost.cache$iter, y = cost.cache$cost, type = "l", xlab = "Number of Epochs", ylab = "Cost")
 
 
 ```
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-<!-- ```{r eda-3} -->
-
-
-<!-- #num.cols = sapply(train[,], is.factor) -->
-<!-- cormat = matrix(rep(0, 258*258), ncol = 258) -->
-<!-- for (i in 2:256) {#256 -->
-<!--   for (j in (i+1):257) {#257 -->
-<!--     cormat[i,j] = cor(train[, i], train[, j]) -->
-<!--   } -->
-<!-- } -->
-
-<!-- ``` -->
-
-<!-- 1.   -->
-<!-- 2.  We add a dummy `target` column to the *test* dataset and then combine the *train* and *test* dataset. -->
-<!-- 3.  We scale the combined dataset and then re-split them into two separate datasets -->
-
-<!-- ```{r baseline-1} -->
-<!-- test$target = as.ff(rep(0, times = n.test)) -->
-<!-- dat = ffdfappend(train, test) # Equivalent of rbind -->
-<!-- rm(test, train) -->
-<!-- gc() -->
-
-<!-- dat.scaled = as.ffdf(sapply(dat[, 2:257], scale)) -->
-
-<!-- save.ffdf(train, dir = "../RDA/traindir", overwrite = TRUE) -->
-<!-- save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE) -->
-
-<!-- rm(list = ls()) -->
-<!-- gc() -->
-<!-- ``` -->
 
