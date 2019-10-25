@@ -1,5 +1,5 @@
 ---
-title: "Part II - Ascertainig Multi-collinearity"
+title: "Part III - Logistic Regression"
 author: "Sanjeev Gadre"
 date: "October 23, 2019"
 output: html_document
@@ -23,22 +23,23 @@ if (!dir.exists(ffdir)){dir.create(ffdir)}
 
 ```
 
-Loading utility functions
 
-```{r utilitity-functions}
-# save.ffdf(train, dir = "../RDA/traindir", overwrite = TRUE)
-# save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE)
-# 
-# test = load.ffdf(dir = "../RDA/testdir")
-#     test = test[["test"]]
-#     open.ffdf(test)
-    
+<!-- Loading utility functions -->
 
-```
+<!-- ```{r utilitity-functions} -->
+<!-- save.ffdf(train, dir = "../RDA/traindir", overwrite = TRUE) -->
+<!-- save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE) -->
 
-### Functions for Mini-batch Gradient Descent with Linear Activation
+<!-- test = load.ffdf(dir = "../RDA/testdir") -->
+<!--     test = test[["test"]] -->
+<!--     open.ffdf(test) -->
 
-```{r gradient-descent-functions-linear}
+
+<!-- ``` -->
+
+### Functions for Mini-batch Gradient Descent
+
+```{r gradient-descent-functions}
 param.init = function (p.in, p.out){
   set.seed(1970)
  
@@ -50,23 +51,28 @@ param.init = function (p.in, p.out){
   return(param.cache)
 }
 
-fwd.prop.linear = function(A.in, param.cache){
+fwd.prop.sigmoid = function(A.in, param.cache){
+  epsilon = 10^-7
   m = nrow(A.in)
   W = param.cache[["W"]]
   b = param.cache[["b"]]
   B = matrix(rep(b, m), nrow = m)             # Because R does not support "broadcast"
   
-  A.out = A.in %*% W + b   
-
+  Z = A.in %*% W + B   
+  A.out = 1/(1+exp(-Z))
+  # Scaling A.out from [0,1] to [epsilon, 1-epsilon] to avoid NaN's in cost calculation
+  A.out = epsilon + A.out*(1-2*epsilon)   
+  
   return(A.out)
 }
 
-cost.fn.linear = function(Y, Y.hat, param.cache, lambda = 0){
+# lambda value needs to be passed if cost regularization is desired
+
+cost.fn.sigmoid = function(Y, Y.hat, param.cache, lambda = 0){
   m = nrow(Y.hat)
   W = param.cache[["W"]]
   
-  J = (1/(2*m))*(sum((Y.hat-Y)^2) + lambda*sum(W^2))
-  
+  J = (-1/m)*sum(Y*log(Y.hat) + (1-Y)*log(1-Y.hat)) + (lambda/(2*m))*sum(W^2)
   return(J)
 }
 
@@ -107,7 +113,8 @@ grad.cache.init = function(param.cache, acc = "none") {
 # beta1 and beta2 values need to be passed if accelaration is desired
   # beta1 for "Momentum", beta2 for "RMSprop" and both for "Adam"
 
-bwd.prop.linear = function(X, Y, A.out, param.cache, grad.cache, lambda = 0, beta1 = 0.9, beta2 = 0.999){
+
+bwd.prop.sigmoid = function(X, Y, A.out, param.cache, grad.cache, lambda = 0, beta1 = 0.9, beta2 = 0.999){
   m = nrow(A.out)
   W = param.cache[["W"]]
   VdW = grad.cache[["VdW"]];    Vdb = grad.cache[["Vdb"]]
@@ -197,67 +204,38 @@ param.update = function(alpha, grad.cache, param.cache, beta1 = 0.9, beta2 = 0.9
 train = load.ffdf(dir = "../RDA/traindir")
 train = train[["train"]]
 open.ffdf(train)
-#ffload(paste(ffdir, "/train.y", sep = ""))
-
+ffload(paste(ffdir, "/train.y", sep = ""))
 
 ```
 
-```{r temp}
-feat = 1
+### Train/Dev/Test
 
-# To find the VIF, we regress every independent variable on all other independent variables.
-# Therefore, for these regressions, the number of features in input layer will 255
+```{r train-dev-test}
+# We are partioning the train datasets into 3: dev (20,000), test (0), train (remaining)
 
-p.in = ncol(train) - 1      # number of features for the input
-m = nrow(train)             # number of training examples
-alpha = 10^-2               # learning rate
-epochs = 10^1               # number of epochs or iterations
+set.seed(1970)
+m = nrow(train)
+indx = split(sample(1:m, m), f = c(rep("dev", 20000), rep("train", m-20000)))
+
+```
+
+```{r logistic-regression}
+
+p.in = ncol(train)          # number of features for the input
+m = length(indx$train)      # number of training examples, in this case the train subset of train
+alpha = 10^-5               # learning rate
+epochs = 10^0               # number of epochs or iterations
 lambda = 0                  # regularization penalty
 acc = "none"                # gradient descent accelaration algorithm
 beta1 = 0.9                 # gradient descent accelaration algorithm parameter
 beta2 = 0.999               # gradient descent accelaration algorithm parameter
-mini.bat.sz = 64            # mini-batch size (=1 for stochastic, =m for gradient descent, >1 <m for mini-batch)
+mini.bat.sz = 064           # mini-batch size (=1 for stochastic, =m for gradient descent, >1 <m for mini-batch)
 t = 1                       # running count of mini-batches across epochs used for Adam accelaration
 
 
 param.cache = param.init(p.in, 1)                           # initializing the weights
 grad.cache = grad.cache.init(param.cache, acc)              # initializing the gradients
 cost.cache = list("cost" = NULL, "iter" = NULL)             # list to save costs periodically
-
-vif = rep(0, (p.in+1))      # Vector to store the VIF for individual features
-```
-
-
-### Calculating VIF
-
-```{r calc-vif}
-feat = 1
-
-# To find the VIF, we regress every independent variable on all other independent variables.
-# Therefore, for these regressions, the number of features in input layer will 255
-
-p.in = ncol(train) - 1      # number of features for the input
-m = nrow(train)             # number of training examples
-alpha = 10^-2               # learning rate
-epochs = 10^1               # number of epochs or iterations
-lambda = 0                  # regularization penalty
-acc = "none"                # gradient descent accelaration algorithm
-beta1 = 0.9                 # gradient descent accelaration algorithm parameter
-beta2 = 0.999               # gradient descent accelaration algorithm parameter
-mini.bat.sz = 64            # mini-batch size (=1 for stochastic, =m for gradient descent, >1 <m for mini-batch)
-t = 1                       # running count of mini-batches across epochs used for Adam accelaration
-vif = rep(0, (ncol(train))) # Vector to store the VIF for individual features
-
-for (feat in 1:ncol(train)) {
-  # Code for linear regression of feat over all other variables
-}
-
-
-param.cache = param.init(p.in, 1)                           # initializing the weights
-grad.cache = grad.cache.init(param.cache, acc)              # initializing the gradients
-cost.cache = list("cost" = NULL, "iter" = NULL)             # list to save costs periodically
-
-timestamp()
 
 if (m < mini.bat.sz) {                                      # Sanity check
   mini.bat.nos = m
@@ -267,34 +245,34 @@ if (m < mini.bat.sz) {                                      # Sanity check
 
 for (i in 1:epochs) {
   set.seed(i)
-  indx = sample(1:m, m)
+  e.indx = sample(1:m, m)
   
   for (j in 1:mini.bat.nos) {
     end = j*mini.bat.sz
     beg = end - mini.bat.sz + 1
-    minindex = indx[beg:end]
+    minindex = indx$train[e.indx[beg:end]]
+
+    X.mini = train[minindex, ] %>% as.matrix()             # Forming the mini-batch
+    Y.mini = train.y[minindex] %>% as.numeric()
     
-    X.mini = train[minindex, -feat] %>% as.matrix()
-    Y.mini = train[minindex, feat] %>% as.numeric()
-    
-    if (!is.matrix(X.mini)) {                                                    # Sanity Check
+    if (!is.matrix(X.mini)) {                               # Sanity Check
       stop("X.mini is not a matrix. Fatal Error. Quitting!")
     }
     if (!is.numeric(Y.mini)) {
       stop("Y.mini is not a numeric vector. Fatal Error. Quitting!")
     }
     
-    A.out = fwd.prop.linear(X.mini, param.cache)                                 # Forward Propagation
+    A.out = fwd.prop.sigmoid(X.mini, param.cache)                                 # Forward Propagation
     
-    cost = cost.fn.linear(Y.mini, A.out, param.cache, lambda)                    # Calculate the cost function
+    cost = cost.fn.sigmoid(Y.mini, A.out, param.cache, lambda)                    # Calculate the cost function
     cost.cache$cost = append(cost.cache$cost, cost)
     cost.cache$iter = append(cost.cache$iter, t)
     
-    grad.cache = bwd.prop.linear(X.mini, Y.mini, A.out, param.cache, grad.cache, 
+    grad.cache = bwd.prop.sigmoid(X.mini, Y.mini, A.out, param.cache, grad.cache, 
                                  lambda, beta1, beta2)                           # Backward Propagation
     
     param.cache = param.update(alpha, grad.cache, param.cache,
-                               beta1, beta2, t)                                 # Updating the weights
+                                beta1, beta2, t)                                 # Updating the weights
     
     t = t + 1
   }
@@ -302,22 +280,29 @@ for (i in 1:epochs) {
   if (m %% mini.bat.sz != 0) {          # Accounting for the non-full-sized mini-batch
     beg = mini.bat.nos*mini.bat.sz + 1
     end = m
-    minindex = indx[beg:end]
+    minindex = indx$train[e.indx[beg:end]]
+
+    X.mini = train[minindex, ] %>% as.matrix()             # Forming the mini-batch
+    Y.mini = train.y[minindex] %>% as.numeric()
     
-    X.mini = train[minindex, -feat] %>% as.matrix()
-    Y.mini = train[minindex, feat] %>% as.numeric()
+    if (!is.matrix(X.mini)) {                               # Sanity Check
+      stop("X.mini is not a matrix. Fatal Error. Quitting!")
+    }
+    if (!is.numeric(Y.mini)) {
+      stop("Y.mini is not a numeric vector. Fatal Error. Quitting!")
+    }
     
-    A.out = fwd.prop.linear(X.mini, param.cache)                                 # Forward Propagation
+    A.out = fwd.prop.sigmoid(X.mini, param.cache)                                 # Forward Propagation
     
-    cost = cost.fn.linear(Y.mini, A.out, param.cache, lambda)                    # Calculate the cost function
+    cost = cost.fn.sigmoid(Y.mini, A.out, param.cache, lambda)                    # Calculate the cost function
     cost.cache$cost = append(cost.cache$cost, cost)
     cost.cache$iter = append(cost.cache$iter, t)
     
-    grad.cache = bwd.prop.linear(X.mini, Y.mini, A.out, param.cache, grad.cache, 
+    grad.cache = bwd.prop.sigmoid(X.mini, Y.mini, A.out, param.cache, grad.cache, 
                                  lambda, beta1, beta2)                           # Backward Propagation
     
     param.cache = param.update(alpha, grad.cache, param.cache,
-                               beta1, beta2, t)                                 # Updating the weights
+                                beta1, beta2, t)                                 # Updating the weights
     
     t = t + 1
   }
@@ -325,29 +310,34 @@ for (i in 1:epochs) {
 }
 
 plot(x = cost.cache$iter, y = cost.cache$cost, type = "l", xlab = "Number of Minibatches", ylab = "Cost")
-
-timestamp()
-
-preds = fwd.prop.linear(train[, -feat] %>% as.matrix(), param.cache)
-
-RSS = (preds - train[, feat])^2 %>% sum()
-TSS = (mean(train[, feat]) - train[, feat])^2 %>% sum()
-Rsq = 1 - RSS/TSS
-vif[feat] = 1/(1-Rsq)
-
-print(paste("The R-squared for the fit = ", round(100*Rsq, 2), "%", sep = ""))
-
 ```
 
-```{r temp-2}
-preds = fwd.prop.linear(train[, -feat] %>% as.matrix(), param.cache)
+### Calculating the Dev Set Error
 
-RSS = (preds - train[, feat])^2 %>% sum()
-TSS = (mean(train[, feat]) - train[, feat])^2 %>% sum()
-Rsq = 1 - RSS/TSS
+```{r d}
+probs = fwd.prop.sigmoid(train[indx$dev, ] %>% as.matrix(), param.cache)
+preds = ifelse(probs < 0.5, 0, 1)
 
-print(paste("The R-squared for the fit = ", round(100*Rsq, 2), "%", sep = ""))
+#table(preds, train.y[indx$dev]) %>% prop.table()
 
+print(paste("The prediction accuracy on the dev set is", round(mean(preds == train.y[indx$dev]), 4), "%"))
+```
+
+```{r}
+for (i in 1:25){
+  indx = sample(1:nrow(train), 2500)
+
+  X.sample = train[indx, ]
+  Y.sample = train.y[indx]
+  
+  dat = data.frame(train[indx,], target = train.y[indx])
+  
+  model = prcomp(X.sample)
+  var.xplnd = model$sdev^2/sum(model$sdev^2)
+  cum.var.xplnd = cumsum(var.xplnd)
+  
+  print(which(cum.var.xplnd >= 0.85))
+}
 
 ```
 
