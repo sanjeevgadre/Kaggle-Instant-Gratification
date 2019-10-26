@@ -16,6 +16,7 @@ library(dplyr)
 library(ggplot2)
 library(ff)
 library(ffbase)
+library(biglm)
 
 # Creating ffdir where ff objects can be stored and retrieved
 ffdir = paste(getwd(), "/ffdir", sep = "")
@@ -227,9 +228,6 @@ cost.cache = list("cost" = NULL, "iter" = NULL)             # list to save costs
 vif = rep(0, (p.in+1))      # Vector to store the VIF for individual features
 ```
 
-
-### Calculating VIF
-
 ```{r calc-vif}
 feat = 1
 
@@ -350,4 +348,141 @@ print(paste("The R-squared for the fit = ", round(100*Rsq, 2), "%", sep = ""))
 
 
 ```
+
+### Calculating VIF
+
+```{r vif}
+p = ncol(train)
+vif = rep(0, p)
+
+for (k in 1:p) {
+  indx = setdiff(1:p, k)
+  f = paste(colnames(train)[k], "~", colnames(train)[indx[1]], sep = "")
+  for (i in indx[-1]) {
+    f = paste(f, "+", colnames(train)[i], sep = "")
+  }
+  
+  f = as.formula(f)
+  model = bigglm.ffdf(f, data = train)
+  rsq = summary(model)$rsq
+  vif[k] = 1/(1-rsq)
+  
+  print(paste("Finished Processing feature", k))
+}
+
+saveRDS(vif, "../RDA/vif.Rda")
+```
+
+
+<!-- ```{r} -->
+<!-- m = nrow(train) -->
+<!-- k = 51000 -->
+<!-- n = ceiling(m/k) -->
+<!-- p = ncol(train) -->
+<!-- cif = rep(0, p) -->
+<!-- feat = 1:2 -->
+<!-- #feat = sample(1:p, 10) -->
+
+<!-- timestamp() -->
+<!-- for (f in feat) { -->
+<!--   for (i in 1:n) { -->
+<!--     indx = sample(1:m, k) -->
+<!--     #print(indx[1]) -->
+<!--     dat = data.frame(train[indx, -f], target = train[indx, f]) -->
+<!--     model = lm(target~., dat) -->
+<!--     cif[f] = vif[f] + summary(model)$r.squared -->
+<!--   } -->
+
+<!--   cif[f] = cif[f]/n -->
+<!--   cif[f] = 1/(1-cif[f]) -->
+<!--   print(paste("Finished for feature", f)) -->
+<!-- } -->
+<!-- timestamp() -->
+
+<!-- ``` -->
+
+
+<!-- ```{r incremental-linear-regression} -->
+<!-- p = ncol(train) -->
+<!-- m = nrow(train) -->
+<!-- mini.bat.sz = 10000 -->
+<!-- mini.bat.nos = m %/% mini.bat.sz -->
+<!-- vif = rep(0, p) -->
+
+
+<!-- timestamp() -->
+<!-- for (feat in 1:p) { -->
+<!--   dat = data.frame(train[1:mini.bat.size, -feat], target = train[1:mini.bat.size, feat]) -->
+<!--   model = lm(target~., dat) -->
+
+<!--   for(j in 2:bat.nos){ -->
+<!--     end = j*mini.bat.sz -->
+<!--     beg = end - mini.bat.sz + 1 -->
+
+<!--     dat = data.frame(train[beg:end, -feat], target = train[beg:end, feat]) -->
+<!--     model = update(model, .~., dat) -->
+
+<!--     #print(paste("Fitted model for feat = ", feat, ", and mini-batch no = ", j)) -->
+<!--   } -->
+
+<!--   if (m %% mini.bat.sz != 0) {          # Accounting for the non-full-sized mini-batch -->
+<!--     beg = mini.bat.nos*mini.bat.sz + 1 -->
+<!--     end = m -->
+
+<!--     dat = data.frame(train[beg:end, -feat], target = train[beg:end, feat]) -->
+<!--     model = update(model, .~., dat) -->
+
+<!--     print(paste("Fitted model for feat = ", feat, ", for non-full mini-batch")) -->
+
+<!--   } -->
+
+<!--   vif[feat] = 1/(1-summary(model)$r.squared) -->
+
+<!-- } -->
+
+<!-- timestamp() -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- beg = 1 -->
+<!-- end = 20000 -->
+<!-- dat = data.frame(train[beg:end, -1], target = train[beg:end, 1]) -->
+<!-- model.full = lm(target~., dat) -->
+<!-- summary(model.full)$r.squared -->
+
+<!-- # beg = 20001 -->
+<!-- # end = 40000 -->
+<!-- # dat = data.frame(train[1:m, -1], target = train[1:m, 1]) -->
+<!-- # model.full = update(model.full, dat) -->
+<!-- # summary(model.full)$r.squared -->
+
+<!-- m = 20000 -->
+<!-- mini.bat.sz = 2000 -->
+<!-- mini.bat.nos = m %/% mini.bat.sz -->
+
+<!-- indx = sample(1:m, m) -->
+<!-- end = 1*mini.bat.sz -->
+<!-- beg = end - mini.bat.sz + 1 -->
+<!-- minindex = indx[beg:end] -->
+<!-- dat = data.frame(train[minindex, -1], target = train[minindex, 1]) -->
+
+<!-- model = lm(target~., dat) -->
+
+<!-- for (i in 1:2) { -->
+<!--   for (j in 1:mini.bat.nos) { -->
+<!--       end = j*mini.bat.sz -->
+<!--       beg = end - mini.bat.sz + 1 -->
+<!--       minindex = indx[beg:end] -->
+<!--       dat = data.frame(train[minindex, -1], target = train[minindex, 1]) -->
+
+<!--       model = update(model, dat, evaluate = TRUE) -->
+
+<!--       if (j %% 1 == 0) {print(summary(model)$r.squared)} -->
+<!--   } -->
+<!--   #print(summary(model)$r.squared) -->
+<!-- } -->
+
+
+<!-- ``` -->
 
