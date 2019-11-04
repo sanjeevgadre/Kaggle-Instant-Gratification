@@ -1,0 +1,175 @@
+---
+title: "Part I - EDA and Pre-processing"
+author: "Sanjeev Gadre"
+date: "September 24, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE)
+```
+
+Loading the required libraries
+
+```{r libraries, message=FALSE}
+library(dplyr)
+library(ggplot2)
+library(ff)
+library(ffbase)
+library(biglm)
+
+# Creating ffdir where ff objects can be stored and retrieved
+ffdir = paste(getwd(), "/ffdir", sep = "")
+if (!dir.exists(ffdir)){dir.create(ffdir)}
+
+```
+
+
+<!-- Loading utility functions -->
+
+<!-- ```{r utilitity-functions} -->
+<!-- save.ffdf(train, dir = "../RDA/traindir", overwrite = TRUE) -->
+<!-- save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE) -->
+
+<!-- train = load.ffdf(dir = "../RDA/traindir") -->
+<!--     train = train[["train"]] -->
+<!--     open.ffdf(train) -->
+<!-- test = load.ffdf(dir = "../RDA/testdir") -->
+<!--     test = test[["test"]] -->
+<!--     open.ffdf(test) -->
+<!-- ``` -->
+
+### Getting data
+
+1.  The size of both the *train* and the *test* datasets are moderately large and this computer's RAM (4GB) is unlikely to be sufficient to process them. We, therefore, use the `ff` and `ffbase` libraries to read and process the datasets.
+
+```{r get-data}
+train = read.csv.ffdf(file = "../data/train.csv")
+test = read.csv.ffdf(file = "../data/test.csv")
+n.train = nrow(train)
+n.test = nrow(test)
+p = ncol(train)
+
+```
+
+### EDA - I
+
+1.  We get the dimensions of the *train* and *test* dataset.
+2.  We ascertain if there are `NA` values in the two datasets and if there are then, ascertain the frequency of the `NA` by column.
+3.  We look for the proportion of the `target` labels in the *train* dataset.
+4.  Finally, we get some summary statistics on the data in each column of the *train* dataset
+
+```{r eda-1}
+print(paste("The number of training examples:", n.train))
+print(paste("The number of test examples:", n.test))
+print(paste("The number of features:", p-1))
+
+train.na.data = sapply(train[,], function(x){sum(is.na(x))})
+test.na.data = sapply(test[,], function(x){sum(is.na(x))})
+writeLines("Columns in the train dataset reporting NA values\n")
+train.na.data[train.na.data != 0]
+writeLines("\nColumns in the test dataset reporting NA values\n")
+test.na.data[test.na.data != 0]
+
+writeLines("The proportion of the two labels in the train datset is:")
+table(train[, "target"]) %>% prop.table() %>% round(digits = 4)
+
+eda.mat = matrix(rep(NA, p*5), ncol = 5)
+colnames(eda.mat) = c("Name", "Class", "Min Val", "Max Val", "Unique Val")
+for (i in 1:p) {
+  eda.mat[i, 1] = colnames(train)[i]
+  eda.mat[i, 2] = class(train[,i])
+  if (!is.factor(train[, i])) {
+    eda.mat[i, 3] = min(train[, i], na.rm = FALSE)
+    eda.mat[i, 4] = max(train[, i], na.rm = FALSE)
+    eda.mat[i, 5] = length(unique(train[, i]))
+  }
+
+}
+writeLines("Summary of all non-factor columns of train dataset\n")
+as_tibble(eda.mat)
+
+writeLines("\nLevels of the id column of train dataset")
+tibble::enframe(levels(train[,1]))
+```
+
+**Observations**
+
+1.  There are no NA values in either the *train* or the *test* dataset.
+2.  The two categories are almost equally represented in the *train* dataset.
+3.  The first column is `id`. The values of this column don't show any discernable pattern.
+4.  The last column is `target` and represents the classification lable value {0, 1}
+5.  All other columns/features except *wheezy.copper.turtle.magic* are `numeric` in class and report values in comparable ranges.
+6.  Interestingly, *wheezy.copper.turtle.magic* is the only feature which is `integer` in class and has a very very small number of unique values (512) whereas all other features have very large number of unique values (25000+). It would seem that this particular feature is unique/interesting in some way
+
+### Pre-process-1
+
+1.  We save the `id` column separately for future reference but drop it from the *train* dataset.
+2.  We repeat the step above for the *test* dataset
+
+```{r pre-proc-1}
+train.id.val = train$id
+ffsave(train.id.val, file = paste(ffdir, "/train.id.val", sep = ""), rootpath = getOption("fftempdir"))
+rm(train.id.val); gc()
+
+# train.y = train$target
+# ffsave(train.y, file = paste(ffdir, "/train.y", sep = ""), rootpath = getOption("fftempdir"))
+# train = subset.ffdf(train, select = -c(id, target))
+train = subset.ffdf(train, select = -id)
+
+# min_val = min(train[, "wheezy.copper.turtle.magic"]); max_val = max(train[, "wheezy.copper.turtle.magic"])
+# train$wheezy.copper.turtle.magic = (17-(-17))*(train$wheezy.copper.turtle.magic - min_val)/(max_val - min_val) + (-17)
+
+test.id.val = test$id
+ffsave(test.id.val, file = paste(ffdir, "/test.id.val", sep = ""), rootpath = getOption("fftempdir"))
+rm(test.id.val); gc()
+test = subset.ffdf(test, select=-id)
+# test$wheezy.copper.turtle.magic = (17-(-17))*(test$wheezy.copper.turtle.magic - min_val)/(max_val - min_val) + (-17)
+
+
+```
+
+### Investigating Multi-collinearity
+
+1.  We investigate if the features of the *train* dataset are collinear. We do this by calculating the **Variance Inflation Factor** for each of the features
+
+```{r eda-2}
+p = ncol(train) - 1       # Accounting for the dependent variable 'target'
+vif = rep(0, p)
+
+for (k in 1:p) {
+  indx = setdiff(1:p, k)
+  f = paste(colnames(train)[k], "~", colnames(train)[indx[1]], sep = "")
+  for (i in indx[-1]) {
+    f = paste(f, "+", colnames(train)[i], sep = "")
+  }
+  
+  f = as.formula(f)
+  model = bigglm.ffdf(f, data = train)
+  rsq = summary(model)$rsq
+  vif[k] = 1/(1-rsq)
+  
+  print(paste("Finished Processing feature", k))
+}
+
+range(vif)
+```
+
+**Observations**
+
+1.  The VIF values clearly indicate that there is no multi-variable colliniearity between the features.
+
+### Saving a baseline
+
+1.  We save a baseline version of both the *train* and *test* datasets.
+
+```{r save-data}
+save.ffdf(train, dir = "../RDA/traindir", overwrite = TRUE)
+save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE)
+
+```
+
+1.  We now proceed to build learning models based on the *train* dataset. We propose to build models based on two learning algorithms:
+  a.  Logistic Regression
+  b.  Naive Bayes
+
