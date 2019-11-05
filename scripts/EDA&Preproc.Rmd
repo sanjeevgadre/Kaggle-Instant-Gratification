@@ -17,6 +17,7 @@ library(ggplot2)
 library(ff)
 library(ffbase)
 library(biglm)
+library(ROCR)
 
 # Creating ffdir where ff objects can be stored and retrieved
 ffdir = paste(getwd(), "/ffdir", sep = "")
@@ -100,7 +101,7 @@ tibble::enframe(levels(train[,1]))
 3.  The first column is `id`. The values of this column don't show any discernable pattern.
 4.  The last column is `target` and represents the classification lable value {0, 1}
 5.  All other columns/features except *wheezy.copper.turtle.magic* are `numeric` in class and report values in comparable ranges.
-6.  Interestingly, *wheezy.copper.turtle.magic* is the only feature which is `integer` in class and has a very very small number of unique values (512) whereas all other features have very large number of unique values (25000+). It would seem that this particular feature is unique/interesting in some way
+6.  Interestingly, *wheezy.copper.turtle.magic* is the only feature which is `integer` in class and has a very very small number of unique values (512) whereas all other features have very large number of unique values (25000+). It would seem that this particular feature is unique/interesting in some way.
 
 ### Pre-process-1
 
@@ -111,21 +112,12 @@ tibble::enframe(levels(train[,1]))
 train.id.val = train$id
 ffsave(train.id.val, file = paste(ffdir, "/train.id.val", sep = ""), rootpath = getOption("fftempdir"))
 rm(train.id.val); gc()
-
-# train.y = train$target
-# ffsave(train.y, file = paste(ffdir, "/train.y", sep = ""), rootpath = getOption("fftempdir"))
-# train = subset.ffdf(train, select = -c(id, target))
 train = subset.ffdf(train, select = -id)
-
-# min_val = min(train[, "wheezy.copper.turtle.magic"]); max_val = max(train[, "wheezy.copper.turtle.magic"])
-# train$wheezy.copper.turtle.magic = (17-(-17))*(train$wheezy.copper.turtle.magic - min_val)/(max_val - min_val) + (-17)
 
 test.id.val = test$id
 ffsave(test.id.val, file = paste(ffdir, "/test.id.val", sep = ""), rootpath = getOption("fftempdir"))
 rm(test.id.val); gc()
 test = subset.ffdf(test, select=-id)
-# test$wheezy.copper.turtle.magic = (17-(-17))*(test$wheezy.copper.turtle.magic - min_val)/(max_val - min_val) + (-17)
-
 
 ```
 
@@ -149,7 +141,7 @@ for (k in 1:p) {
   rsq = summary(model)$rsq
   vif[k] = 1/(1-rsq)
   
-  print(paste("Finished Processing feature", k))
+  # print(paste("Finished Processing feature", k))
 }
 
 range(vif)
@@ -172,4 +164,60 @@ save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE)
 1.  We now proceed to build learning models based on the *train* dataset. We propose to build models based on two learning algorithms:
   a.  Logistic Regression
   b.  Naive Bayes
+  
+### Building the Logistic Regression Model
 
+```{r logit-model}
+# There is a bit of circus here to split the ffdf into a train and a test subset.
+# All relevant ff functions such as ffdfindexget() or subset.ff() will accept only positive indices i.e index = (-indx) is not a valid expression when used with these functions and therefore we are required to create two separate indices, one for the train subset and another for the test subset.
+
+set.seed(1970)
+indx.tst = sample(1:nrow(train), 0.1*nrow(train))
+indx.trn = 1:nrow(train)
+indx.trn = indx.trn[-indx.tst]
+
+# Setting up the glm formula
+p = ncol(train) - 1
+f = paste("target", "~", colnames(train)[1], sep = "")
+for (k in 2:p) {
+  f = paste(f, "+", colnames(train)[k], sep = "")
+}
+
+f = as.formula(f)
+
+# To use bigglm.ffdf() and predict.bigglm() but avoid making another copy of the train dataset, we use ffdfindexget(). However, ffindexget() requires the index vector as a ff_vector and we are required to convert the index vectors into ff_vectors
+
+indx.trn = ff(indx.trn)
+indx.tst = ff(indx.tst)
+
+logit.model = bigglm.ffdf(f, data = ffdfindexget(train, indx.trn), family = binomial())
+
+prob = predict(logit.model, newdata = ffdfindexget(train, indx.tst), type = "response")
+
+# The ROCR::prediction() function requires both the probs and labels as vectors (or matrices) and we have a bit of a circus to access the relevant values of train$target[indx.tst]. Note the repeated use of [] to access the required values as a vector
+
+labl = train[['target']][indx.tst[]]
+
+pred = prediction(prob, labl)
+perf = performance(pred, "auc")
+
+print(paste("The Area Under the Curve (AUC) for the test subset = ", perf@y.values))
+
+#prob = ff(as.numeric(NA), length = length.ff(indx.tst))
+#pred = ff(as.numeric(NA), length = nrow(train))
+# chunks = chunk.ffdf(ffdfindexget(train, indx.tst))
+# 
+# for (chunkrangeindex in chunks) {
+#   prob[chunkrangeindex] = predict(logit.model, newdata = train[chunkrangeindex, ], type = "response")
+#   
+# }
+# 
+# pred = ifelse(prob[] < 0.5, 0, 1)
+#   
+# mean(train[, "target"] == pred[])
+
+```
+
+*Observation*
+
+1.  The Area Under the Curve for the test subset implies that the logistic regression model does slightly better than random guessing and is therefore not a particularly useful model. 
