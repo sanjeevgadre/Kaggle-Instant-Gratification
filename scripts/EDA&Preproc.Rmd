@@ -18,6 +18,7 @@ library(ff)
 library(ffbase)
 library(biglm)
 library(ROCR)
+library(glmnet)
 
 # Creating ffdir where ff objects can be stored and retrieved
 ffdir = paste(getwd(), "/ffdir", sep = "")
@@ -220,4 +221,60 @@ print(paste("The Area Under the Curve (AUC) for the test subset = ", perf@y.valu
 
 *Observation*
 
-1.  The Area Under the Curve for the test subset implies that the logistic regression model does slightly better than random guessing and is therefore not a particularly useful model. 
+1.  The Area Under the Curve for the test subset implies that the logistic regression model does slightly better than random guessing and is therefore not a particularly useful model.
+
+### EDA-2
+
+1.  We had previously noted that *wheezy.copper.turtle.magic* is the only feature which is `integer` in class and has a very very small number of unique values (512) whereas all other features have very large number of unique values (25000+).
+2.  We investigate if *wheezy.copper.turtle.magic* impacts the dependent variable. To that end split the *train* dataset along the values of *wheezy.copper.turtle.magic* and calculate and plot the class distribution for the dependent variable for each subset.
+
+```{r eda-2-a}
+dat = train[, c("wheezy.copper.turtle.magic", "target")]
+dat = dat %>% group_by(wheezy.copper.turtle.magic) %>% summarise(Class.Prop = mean(target))
+dat %>% ggplot(aes(Class.Prop))+geom_histogram(bins = 100)+ 
+  xlab("Proportion of class =1 in the dependent variable")
+
+```
+
+*Observation*
+
+1.  The histogram confirms our suspicion that *wheezy.copper.turtle.magic* impacts the dependent variable. We find additional confirmation by plotting the qqplot for the proportions shown above.
+
+```{r eda-2-b}
+qqnorm(dat$Class.Prop, main = "Normal Q-Q Plot for Proportion of Class=1"); qqline(dat$Class.Prop)
+```
+
+*Observation*
+
+1.  The Q-Q plot provides strong proof that the *train* dataset is in fact a conglomeration of a number of smaller datasets; each smaller dataset has a different proportion of classes in the dependent variable.
+2.  We hypothise that separate logistic regression models for each sub dataset would provide a significantly better fit than the single model earlier constructed for the entire dataset. We check this hypothesis for a few of the sub datasets.
+
+```{r eda-2-c}
+cat = unique(train$wheezy.copper.turtle.magic[])
+
+for (i in cat[1:5]) {
+  dat = train[train$wheezy.copper.turtle.magic == i, ] %>% as.data.frame()
+  y = dat$target
+  dat = model.matrix(target~., data = dat)[, -1]
+
+  set.seed(i)
+  indx.tst = sample(1:nrow(dat), 0.3*nrow(dat))
+  
+  cv.out = cv.glmnet(dat, y, nfolds = 5)
+  best.lambda = cv.out$lambda.min
+  
+  logit.model = glmnet(dat[-indx.tst, ], y[-indx.tst], family = "binomial", lambda = best.lambda)
+  prob = predict(logit.model, newx = dat[indx.tst, ], type = "response")
+  labl = y[indx.tst]
+
+  pred = prediction(prob, labl)
+  perf = performance(pred, "auc")
+
+  print(paste("The Area Under the Curve (AUC) for subset", i,"=", perf@y.values))
+
+  
+}
+
+```
+
+
