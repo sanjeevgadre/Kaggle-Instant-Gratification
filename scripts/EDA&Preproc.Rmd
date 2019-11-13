@@ -107,18 +107,18 @@ tibble::enframe(levels(train[,1]))
 
 ### Pre-process-1
 
-1.  We save the `id` column separately for future reference but drop it from the *train* dataset.
-2.  We repeat the step above for the *test* dataset
+1.  For the *train* dataset we drop the `id` column.
+2.  For the *test* dataset we separate the `id` column but do not drop it as it is required for the submission file.
 
 ```{r pre-proc-1}
-train.id.val = train$id
-ffsave(train.id.val, file = paste(ffdir, "/train.id.val", sep = ""), rootpath = getOption("fftempdir"))
-rm(train.id.val); gc()
+# train.id.val = train$id
+# ffsave(train.id.val, file = paste(ffdir, "/train.id.val", sep = ""), rootpath = getOption("fftempdir"))
+# rm(train.id.val); gc()
 train = subset.ffdf(train, select = -id)
 
 test.id.val = test$id
-ffsave(test.id.val, file = paste(ffdir, "/test.id.val", sep = ""), rootpath = getOption("fftempdir"))
-rm(test.id.val); gc()
+# ffsave(test.id.val, file = paste(ffdir, "/test.id.val", sep = ""), rootpath = getOption("fftempdir"))
+# rm(test.id.val); gc()
 test = subset.ffdf(test, select=-id)
 
 ```
