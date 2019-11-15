@@ -34,12 +34,6 @@ if (!dir.exists(ffdir)){dir.create(ffdir)}
 <!-- save.ffdf(train, dir = "../RDA/traindir", overwrite = TRUE) -->
 <!-- save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE) -->
 
-<!-- train = load.ffdf(dir = "../RDA/traindir") -->
-<!--     train = train[["train"]] -->
-<!--     open.ffdf(train) -->
-<!-- test = load.ffdf(dir = "../RDA/testdir") -->
-<!--     test = test[["test"]] -->
-<!--     open.ffdf(test) -->
 <!-- ``` -->
 
 ### Getting data
@@ -49,32 +43,30 @@ if (!dir.exists(ffdir)){dir.create(ffdir)}
 ```{r get-data}
 train = read.csv.ffdf(file = "../data/train.csv")
 test = read.csv.ffdf(file = "../data/test.csv")
-n.train = nrow(train)
-n.test = nrow(test)
-p = ncol(train)
+p = ncol(train) - 1
 
 ```
 
 ### EDA - I
 
 1.  We get the dimensions of the *train* and *test* dataset.
-2.  We ascertain if there are `NA` values in the two datasets and if there are then, ascertain the frequency of the `NA` by column.
+2.  We ascertain if there are `NA` values in the two datasets and if there are then, ascertain the frequency of the `NA` by columns.
 3.  We look for the proportion of the `target` labels in the *train* dataset.
 4.  Finally, we get some summary statistics on the data in each column of the *train* dataset
 
 ```{r eda-1}
-print(paste("The number of training examples:", n.train))
-print(paste("The number of test examples:", n.test))
-print(paste("The number of features:", p-1))
+print(paste("The number of training examples:", nrow(train)))
+print(paste("The number of test examples:", nrow(test)))
+print(paste("The number of features:", p))
 
 train.na.data = sapply(train[,], function(x){sum(is.na(x))})
 test.na.data = sapply(test[,], function(x){sum(is.na(x))})
-writeLines("Columns in the train dataset reporting NA values\n")
+writeLines("\nColumns in the train dataset reporting NA values")
 train.na.data[train.na.data != 0]
-writeLines("\nColumns in the test dataset reporting NA values\n")
+writeLines("\nColumns in the test dataset reporting NA values")
 test.na.data[test.na.data != 0]
 
-writeLines("The proportion of the two labels in the train datset is:")
+writeLines("\nThe proportion of the two labels in the train datset is:")
 table(train[, "target"]) %>% prop.table() %>% round(digits = 4)
 
 eda.mat = matrix(rep(NA, p*5), ncol = 5)
@@ -89,7 +81,7 @@ for (i in 1:p) {
   }
 
 }
-writeLines("Summary of all non-factor columns of train dataset\n")
+writeLines("\nSummary of all non-factor columns of train dataset")
 as_tibble(eda.mat)
 
 writeLines("\nLevels of the id column of train dataset")
@@ -111,14 +103,13 @@ tibble::enframe(levels(train[,1]))
 2.  For the *test* dataset we separate the `id` column but do not drop it as it is required for the submission file.
 
 ```{r pre-proc-1}
-# train.id.val = train$id
-# ffsave(train.id.val, file = paste(ffdir, "/train.id.val", sep = ""), rootpath = getOption("fftempdir"))
-# rm(train.id.val); gc()
+rm(test.na.data, train.na.data)
+gc()
+
 train = subset.ffdf(train, select = -id)
 
 test.id.val = test$id
-# ffsave(test.id.val, file = paste(ffdir, "/test.id.val", sep = ""), rootpath = getOption("fftempdir"))
-# rm(test.id.val); gc()
+
 test = subset.ffdf(test, select=-id)
 
 ```
@@ -143,7 +134,6 @@ for (k in 1:p) {
   rsq = summary(model)$rsq
   vif[k] = 1/(1-rsq)
   
-  # print(paste("Finished Processing feature", k))
 }
 
 range(vif)
@@ -151,27 +141,16 @@ range(vif)
 
 **Observations**
 
-1.  The VIF values clearly indicate that there is no multi-variable colliniearity between the features.
-
-### Saving a baseline
-
-1.  We save a baseline version of both the *train* and *test* datasets.
-
-```{r save-data}
-save.ffdf(train, dir = "../RDA/traindir", overwrite = TRUE)
-save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE)
-
-```
-
-1.  We now proceed to build learning models based on the *train* dataset. We propose to build models based on two learning algorithms:
-  a.  Logistic Regression
-  b.  Naive Bayes
+1.  The range of VIF values clearly indicates that there is no multi-variable colliniearity amongst the features.
+2.  We now proceed to build a baseline learning model using the *train* dataset and the Logistic Regression alogrithm.
   
 ### Building the Logistic Regression Model
 
 ```{r logit-model}
 # There is a bit of circus here to split the ffdf into a train and a test subset.
 # All relevant ff functions such as ffdfindexget() or subset.ff() will accept only positive indices i.e index = (-indx) is not a valid expression when used with these functions and therefore we are required to create two separate indices, one for the train subset and another for the test subset.
+
+# Because the train dataset is rather large in size, we need only 10% of it as a test subset, unlike the usual 25-30%
 
 set.seed(1970)
 indx.tst = sample(1:nrow(train), 0.1*nrow(train))
@@ -192,9 +171,9 @@ f = as.formula(f)
 indx.trn = ff(indx.trn)
 indx.tst = ff(indx.tst)
 
-logit.model = bigglm.ffdf(f, data = ffdfindexget(train, indx.trn), family = binomial())
+model = bigglm.ffdf(f, data = ffdfindexget(train, indx.trn), family = binomial())
 
-prob = predict(logit.model, newdata = ffdfindexget(train, indx.tst), type = "response")
+prob = predict(model, newdata = ffdfindexget(train, indx.tst), type = "response")
 
 # The ROCR::prediction() function requires both the probs and labels as vectors (or matrices) and we have a bit of a circus to access the relevant values of train$target[indx.tst]. Note the repeated use of [] to access the required values as a vector
 
@@ -205,19 +184,6 @@ perf = performance(pred, "auc")
 
 print(paste("The Area Under the Curve (AUC) for the test subset = ", perf@y.values))
 
-#prob = ff(as.numeric(NA), length = length.ff(indx.tst))
-#pred = ff(as.numeric(NA), length = nrow(train))
-# chunks = chunk.ffdf(ffdfindexget(train, indx.tst))
-# 
-# for (chunkrangeindex in chunks) {
-#   prob[chunkrangeindex] = predict(logit.model, newdata = train[chunkrangeindex, ], type = "response")
-#   
-# }
-# 
-# pred = ifelse(prob[] < 0.5, 0, 1)
-#   
-# mean(train[, "target"] == pred[])
-
 ```
 
 *Observation*
@@ -226,10 +192,13 @@ print(paste("The Area Under the Curve (AUC) for the test subset = ", perf@y.valu
 
 ### EDA-2
 
-1.  We had previously noted that `wheezy.copper.turtle.magic` is the only feature which is `integer` in class and has a very very small number of unique values (512) whereas all other features have very large number of unique values (25000+).
-2.  We investigate if `wheezy.copper.turtle.magic` impacts the dependent variable. To that end split the *train* dataset along the values of `wheezy.copper.turtle.magic` and calculate and plot the class distribution for the dependent variable for each subset.
+1.  We had previously noted that `wheezy.copper.turtle.magic` is the only feature which is `integer` in class and has small number of unique values (512) whereas all other features have very large number of unique values (25000+).
+2.  We investigate if `wheezy.copper.turtle.magic` impacts the dependent variable. To that end split the *train* dataset along the values of `wheezy.copper.turtle.magic` and calculate and plot the class distribution in the dependent variable for each subset.
 
 ```{r eda-2-a}
+rm(eda.mat, indx.trn, indx.tst, model)
+gc()
+
 dat = train[, c("wheezy.copper.turtle.magic", "target")]
 dat = dat %>% group_by(wheezy.copper.turtle.magic) %>% summarise(Class.Prop = mean(target))
 dat %>% ggplot(aes(Class.Prop))+geom_histogram(bins = 100)+ 
@@ -248,50 +217,67 @@ qqnorm(dat$Class.Prop, main = "Normal Q-Q Plot for Proportion of Class=1"); qqli
 *Observation*
 
 1.  The Q-Q plot provides strong proof that the *train* dataset is in fact a conglomeration of a number of smaller datasets; each smaller dataset has a different proportion of classes in the dependent variable.
-2.  We hypothise that separate learning models for each sub dataset would provide a significantly better fit than the single model earlier constructed for the entire dataset.
+2.  We hypothise that **separate learning models for each train sub dataset would provide a significantly better fit than the single model earlier constructed for the entire train dataset.**
 
 ### EDA-3
 
 1.  We had previously concluded, treating the entire *train* dataset as one, that there is no multi-collinearity amongst the features.
 2.  However, now that we have diagnosed that there are multiple subsets (indexed by `wheezy.copper.turtle.magic`), we want to explore if there is multi-collinearity amongst features of the individual subsets of the dataset.
-3.  To this end we use **Principal Component Analysis**.
+3.  To this end we use **Principal Component Analysis**. We select randomly 50 subsets (~10% of total number of subsets) of the *train* dataset and for each of these subsets look for how many principal components explain 90%, 95% and 99% of the variance
 
 ```{r eda-3}
-cat = unique(train$wheezy.copper.turtle.magic[])
+set.seed(1970)
+subsets = sample(1:length(unique(train$wheezy.copper.turtle.magic[])), 50)
+pve.mat = matrix(rep(0, 50*4), ncol = 4)
+colnames(pve.mat) = c("subset", "90%", "95%", "99%")
+i = 1
 
-for (i in cat[101:106]) {
-  dat = train[train$wheezy.copper.turtle.magic == i, ] %>% as.data.frame()
+for (subset in subsets) {
+  dat = train[train$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame()
   dat = subset(dat, select = -c(target, wheezy.copper.turtle.magic))  # Removing cols not required for PCA
   
   model = prcomp(dat, scale. = TRUE)
   
   pve = (model$sdev^2/sum(model$sdev^2)) %>% cumsum()                 # Percentage of variance explained
   
-  writeLines("")
-  print(paste("For subset", i))
-  print(paste("Number of components explaining 90% variance = ", which(pve < 0.9) %>% which.max()))
-  print(paste("Number of components explaining 95% variance = ", which(pve < 0.95) %>% which.max()))
-  print(paste("Number of components explaining 99% variance = ", which(pve < 0.99) %>% which.max()))
-  
+  pve.mat[i, "subset"] = subset
+  pve.mat[i, "90%"] = (which(pve < 0.90) %>% which.max())
+  pve.mat[i, "95%"] = (which(pve < 0.95) %>% which.max())
+  pve.mat[i, "99%"] = (which(pve < 0.99) %>% which.max())
+  i = i + 1
+ 
 }
+
+pve.mat %>% as_tibble()
 
 ```
 
 *Observations*
 
-1.  The results suggest that there is significant multi-collinearity amongst features of the individual subsets of the dataset. Any learning model developed would benefit from implementing dimensionality reduction.
+1.  The results of the PCA suggest that across randomly chosen 50 subsets, ~170 of the 255 principal components explain 90% of the variance in the data, ~200 of the 255 principal components explain 95% of the variance and ~235 of the 255 principal components explain 99% of the variance. This suggests significant multi-collinearity amongst features of the individual subsets of the dataset. **Any learning model developed would benefit from implementing dimensionality reduction.**
 
 ### EDA-4
 
 1.  We confirm that the set of unique values for `wheezy.copper.turtle.magic` is the same for both the *train* and the *test* datasets
 
 ```{r eda-4}
-train.vals = unique(train$wheezy.copper.turtle.magic)[]
-test.vals = unique(test$wheezy.copper.turtle.magic)[]
+rm(pve.mat)
+gc()
 
-setdiff(train.vals, test.vals)
+setdiff(unique(train$wheezy.copper.turtle.magic)[], unique(test$wheezy.copper.turtle.magic)[])
 ```
 
 *Observations*
 
-1.  `wheezy.copper.turtle.magic` has the same set of unique values for both the *train* and the *test* dataset.
+1.  `wheezy.copper.turtle.magic` has the same set of unique values for both the *train* and the *test* dataset and therefore can predict the `target` class for all *test* dataset examples by building models using subsets of the *train* dataset.
+
+### Saving a baseline
+
+1.  We save a baseline version for the important variables that will be required in further analysis.
+
+```{r save-data}
+save.ffdf(train, dir = "../RDA/traindir", overwrite = TRUE)
+save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE)
+ffsave(test.id.val, file = paste(ffdir, "/test.id.val", sep = ""), rootpath = getOption("fftempdir"))
+
+```
