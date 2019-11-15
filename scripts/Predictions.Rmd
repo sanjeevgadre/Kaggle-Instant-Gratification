@@ -1,0 +1,118 @@
+---
+title: "Part III - Predictions"
+author: "Sanjeev Gadre"
+date: "November 13, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE)
+```
+
+Loading the required libraries
+
+```{r libraries, message=FALSE}
+library(dplyr)
+library(ggplot2)
+library(ff)
+library(ffbase)
+#library(biglm)
+library(ROCR)
+#library(glmnet)
+#library(e1071)
+library(MASS)
+
+# Creating ffdir where ff objects can be stored and retrieved
+ffdir = paste(getwd(), "/ffdir", sep = "")
+if (!dir.exists(ffdir)){dir.create(ffdir)}
+
+```
+
+
+<!-- Loading utility functions -->
+
+<!-- ```{r utilitity-functions} -->
+<!-- save.ffdf(train, dir = "../RDA/traindir", overwrite = TRUE) -->
+<!-- save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE) -->
+
+<!-- train = load.ffdf(dir = "../RDA/traindir") -->
+<!--     train = train[["train"]] -->
+<!--     open.ffdf(train) -->
+<!-- test = load.ffdf(dir = "../RDA/testdir") -->
+<!--     test = test[["test"]] -->
+<!--     open.ffdf(test) -->
+<!-- ``` -->
+
+```{r setup}
+subs = unique(train$wheezy.copper.turtle.magic[])
+#subs = sample(1:length(subs), 25)
+out = ffdf(id = test.id.val, key = test$wheezy.copper.turtle.magic, target = ff(rep(0, nrow(test))))
+#rm(test.id.val)
+
+comps = 40:80
+
+```
+
+
+### QDA Regression Models
+
+1.  Fitting QDA Models to sample 25 subsets of *train* indicate that the ideal number of principal components to include in the final model vary between 45 and 75. We, therefore, for the final predictions cross validate models with principal components ranging from 40 to 80 for each subset
+
+```{r multiple-qda-models, warning=FALSE}
+timestamp()
+
+for (sub in subs) {
+  dat = train[train$wheezy.copper.turtle.magic == sub, ] %>% as.data.frame()
+  y = dat$target %>% factor()
+  dat = subset(dat, select = -c(wheezy.copper.turtle.magic, target)) 
+
+  set.seed(sub)
+  indx = sample(1:nrow(dat), 0.2*nrow(dat))
+  
+  pca.out = prcomp(dat)
+  dat = pca.out$x
+  
+  auc = rep(0, length(comps))   # Store the val-set auc for models with candidate number of principal components
+  j = 1
+  for (c in comps) {
+    set.seed(c)
+    model = qda(dat[-indx, 1:c], y[-indx])
+    
+    prob = predict(model, newdata = dat[indx, 1:c])$posterior[, "1"]
+    pred = prediction(prob, y[indx])
+    auc[j] = performance(pred, "auc")@y.values %>% unlist()
+    j = j + 1
+  }
+  
+  best.comp = which.max(auc) %>% comps[.]
+  print(paste("Best comp for subset", sub, "=", best.comp))
+  
+  set.seed(best.comp)
+  model = qda(dat[, 1:best.comp], y)
+  
+  newdat = test[test$wheezy.copper.turtle.magic == sub, ] %>% as.data.frame()
+  newdat = subset(newdat, select = -wheezy.copper.turtle.magic)
+  newdat = prcomp(newdat)
+  newdat = newdat$x[, 1:best.comp]
+  prob = predict(model, newdata = newdat)$posterior[, "1"]
+  out$target[out$key == sub] = ff(prob)
+  
+  print(paste("Finished for subset", sub))
+
+} 
+
+timestamp()
+
+```
+
+```{r preds-out}
+out = subset.ffdf(out, select = -key)
+out = data.frame(out)
+
+write.csv(out, file = "../data/out.csv", quote = FALSE, row.names = FALSE)
+
+
+
+
+```
+
