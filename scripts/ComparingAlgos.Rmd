@@ -29,6 +29,7 @@ if (!dir.exists(ffdir)){dir.create(ffdir)}
 ```
 
 ### Getting Data
+
 1.  We load the necessary datasets processed and saved in the earlier phase.
 
 ```{r get-data, message=FALSE}
@@ -197,7 +198,7 @@ comps = seq(10, 235, length.out = 25) %>% floor()
 test.auc = 0
 rows = 0
 
-for (subset in subsets[1:2]) {
+for (subset in subsets) {
   dat = train[train$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame()
   y = dat$target
   dat = subset(dat, select = -c(target, wheezy.copper.turtle.magic))

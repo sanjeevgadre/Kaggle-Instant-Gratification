@@ -1,7 +1,7 @@
 ---
 title: "Part III - Predictions"
 author: "Sanjeev Gadre"
-date: "November 13, 2019"
+date: "November 15, 2019"
 output: html_document
 ---
 
@@ -28,45 +28,47 @@ if (!dir.exists(ffdir)){dir.create(ffdir)}
 
 ```
 
+### Getting Data
 
-<!-- Loading utility functions -->
+1.  We load the necessary datasets processed and saved in the earlier phase.
 
-<!-- ```{r utilitity-functions} -->
-<!-- save.ffdf(train, dir = "../RDA/traindir", overwrite = TRUE) -->
-<!-- save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE) -->
-
-<!-- train = load.ffdf(dir = "../RDA/traindir") -->
-<!--     train = train[["train"]] -->
-<!--     open.ffdf(train) -->
-<!-- test = load.ffdf(dir = "../RDA/testdir") -->
-<!--     test = test[["test"]] -->
-<!--     open.ffdf(test) -->
-<!-- ``` -->
-
-```{r setup}
-subs = unique(train$wheezy.copper.turtle.magic[])
-#subs = sample(1:length(subs), 25)
-out = ffdf(id = test.id.val, key = test$wheezy.copper.turtle.magic, target = ff(rep(0, nrow(test))))
-#rm(test.id.val)
-
-comps = 40:80
+```{r get-data, message=FALSE}
+train = load.ffdf(dir = "../RDA/traindir")
+    train = train[["train"]]
+    open.ffdf(train)
+test = load.ffdf(dir = "../RDA/testdir")
+    test = test[["test"]]
+    open.ffdf(test)
+ffload(paste(ffdir, "/test.id.val"))
 
 ```
 
+### Setup
+
+1.  Get the setup for making and storing predictions.
+
+```{r setup}
+subsets = unique(train$wheezy.copper.turtle.magic[])
+out = ffdf(id = test.id.val, key = test$wheezy.copper.turtle.magic, target = ff(rep(0, nrow(test))))
+
+comps = 20:55
+
+```
 
 ### QDA Regression Models
 
-1.  Fitting QDA Models to sample 25 subsets of *train* indicate that the ideal number of principal components to include in the final model vary between 45 and 75. We, therefore, for the final predictions cross validate models with principal components ranging from 40 to 80 for each subset
+1.  Fitting QDA Models to every subset of *train* dataset. 
+2.  We use the *train-val* strategy to determine the number of principal components to include in the final model for that subset.
+3.  Based on earlier analysis, we cross validate the number of principal compnents over the range 20-55.
+4.  We then predict the probability for class=1 for all *test* dataset observations in the particular subset.
 
 ```{r multiple-qda-models, warning=FALSE}
-timestamp()
-
-for (sub in subs) {
-  dat = train[train$wheezy.copper.turtle.magic == sub, ] %>% as.data.frame()
-  y = dat$target %>% factor()
+for (subset in subsets) {
+  dat = train[train$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame()
+  y = dat$target
   dat = subset(dat, select = -c(wheezy.copper.turtle.magic, target)) 
 
-  set.seed(sub)
+  set.seed(subset)
   indx = sample(1:nrow(dat), 0.2*nrow(dat))
   
   pca.out = prcomp(dat)
@@ -74,45 +76,39 @@ for (sub in subs) {
   
   auc = rep(0, length(comps))   # Store the val-set auc for models with candidate number of principal components
   j = 1
-  for (c in comps) {
-    set.seed(c)
-    model = qda(dat[-indx, 1:c], y[-indx])
+  for (comp in comps) {
+    set.seed(comp)
+    model = qda(dat[-indx, 1:comp], y[-indx])
     
-    prob = predict(model, newdata = dat[indx, 1:c])$posterior[, "1"]
+    prob = predict(model, newdata = dat[indx, 1:comp])$posterior[, "1"]
     pred = prediction(prob, y[indx])
     auc[j] = performance(pred, "auc")@y.values %>% unlist()
     j = j + 1
   }
   
   best.comp = which.max(auc) %>% comps[.]
-  print(paste("Best comp for subset", sub, "=", best.comp))
   
   set.seed(best.comp)
   model = qda(dat[, 1:best.comp], y)
   
-  newdat = test[test$wheezy.copper.turtle.magic == sub, ] %>% as.data.frame()
+  newdat = test[test$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame()
   newdat = subset(newdat, select = -wheezy.copper.turtle.magic)
   newdat = prcomp(newdat)
   newdat = newdat$x[, 1:best.comp]
   prob = predict(model, newdata = newdat)$posterior[, "1"]
-  out$target[out$key == sub] = ff(prob)
-  
-  print(paste("Finished for subset", sub))
+  out$target[out$key == subset] = ff(prob)
 
 } 
 
-timestamp()
-
 ```
+
+### Finalizing the output
 
 ```{r preds-out}
 out = subset.ffdf(out, select = -key)
 out = data.frame(out)
 
 write.csv(out, file = "../data/out.csv", quote = FALSE, row.names = FALSE)
-
-
-
 
 ```
 

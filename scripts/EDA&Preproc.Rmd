@@ -27,15 +27,6 @@ if (!dir.exists(ffdir)){dir.create(ffdir)}
 
 ```
 
-
-<!-- Loading utility functions -->
-
-<!-- ```{r utilitity-functions} -->
-<!-- save.ffdf(train, dir = "../RDA/traindir", overwrite = TRUE) -->
-<!-- save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE) -->
-
-<!-- ``` -->
-
 ### Getting data
 
 1.  The size of both the *train* and the *test* datasets are moderately large and this computer's RAM (4GB) is unlikely to be sufficient to process them. We, therefore, use the `ff` and `ffbase` libraries to read and process the datasets.

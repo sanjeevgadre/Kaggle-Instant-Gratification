@@ -1,0 +1,548 @@
+---
+title: "The Instant Gratification Challenge on Kaggle"
+author: "Sanjeev Gadre"
+date: "November 16, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE)
+```
+
+Loading the required libraries
+
+```{r libraries, message=FALSE}
+library(dplyr)
+library(ggplot2)
+library(ff)
+library(ffbase)
+library(biglm)
+library(ROCR)
+library(glmnet)
+library(e1071)
+library(MASS)
+
+```
+
+### Getting data
+
+1.  The size of both the *train* and the *test* datasets are moderately large and this computer's RAM (4GB) is unlikely to be sufficient to process them. We, therefore, use the `ff` and `ffbase` libraries to read and process the datasets.
+
+```{r get-data}
+train = read.csv.ffdf(file = "./data/train.csv")
+test = read.csv.ffdf(file = "./data/test.csv")
+p = ncol(train) - 1
+
+```
+
+### EDA - I
+
+1.  We get the dimensions of the *train* and *test* dataset.
+2.  We ascertain if there are `NA` values in the two datasets and if there are then, ascertain the frequency of the `NA` by columns.
+3.  We look for the proportion of the `target` labels in the *train* dataset.
+4.  Finally, we get some summary statistics on the data in each column of the *train* dataset
+
+```{r eda-1}
+print(paste("The number of training examples:", nrow(train)))
+print(paste("The number of test examples:", nrow(test)))
+print(paste("The number of features:", p))
+
+train.na.data = sapply(train[,], function(x){sum(is.na(x))})
+test.na.data = sapply(test[,], function(x){sum(is.na(x))})
+writeLines("\nColumns in the train dataset reporting NA values")
+train.na.data[train.na.data != 0]
+writeLines("\nColumns in the test dataset reporting NA values")
+test.na.data[test.na.data != 0]
+
+writeLines("\nThe proportion of the two labels in the train datset is:")
+table(train[, "target"]) %>% prop.table() %>% round(digits = 4)
+
+eda.mat = matrix(rep(NA, p*5), ncol = 5)
+colnames(eda.mat) = c("Name", "Class", "Min Val", "Max Val", "Unique Val")
+for (i in 1:p) {
+  eda.mat[i, 1] = colnames(train)[i]
+  eda.mat[i, 2] = class(train[,i])
+  if (!is.factor(train[, i])) {
+    eda.mat[i, 3] = min(train[, i], na.rm = FALSE)
+    eda.mat[i, 4] = max(train[, i], na.rm = FALSE)
+    eda.mat[i, 5] = length(unique(train[, i]))
+  }
+
+}
+writeLines("\nSummary of all non-factor columns of train dataset")
+as_tibble(eda.mat)
+
+writeLines("\nLevels of the id column of train dataset")
+tibble::enframe(levels(train[,1]))
+```
+
+**Observations**
+
+1.  There are no NA values in either the *train* or the *test* dataset.
+2.  The two categories are almost equally represented in the *train* dataset.
+3.  The first column is `id`. The values of this column don't show any discernable pattern.
+4.  The last column is `target` and represents the classification lable value {0, 1}
+5.  All other columns/features except `wheezy.copper.turtle.magic` are `num` in class and report values in comparable ranges.
+6.  Interestingly, `wheezy.copper.turtle.magic` is the only feature which is `integer` in class and has a very very small number of unique values (512) whereas all other features have very large number of unique values (25000+). It would seem that this particular feature is unique/interesting in some way.
+
+### Pre-process-1
+
+1.  For the *train* dataset we drop the `id` column.
+2.  For the *test* dataset we separate the `id` column but do not drop it as it is required for the submission file.
+
+```{r pre-proc-1}
+rm(test.na.data, train.na.data)
+gc()
+
+train = subset.ffdf(train, select = -id)
+
+test.id.val = test$id
+test = subset.ffdf(test, select=-id)
+
+```
+
+### Investigating Multi-collinearity
+
+1.  We investigate if the features of the *train* dataset are collinear. We do this by calculating the **Variance Inflation Factor** for each of the features
+
+```{r eda-2}
+p = ncol(train) - 1       # Accounting for the dependent variable 'target'
+vif = rep(0, p)
+
+for (k in 1:p) {
+  indx = setdiff(1:p, k)
+  f = paste(colnames(train)[k], "~", colnames(train)[indx[1]], sep = "")
+  for (i in indx[-1]) {
+    f = paste(f, "+", colnames(train)[i], sep = "")
+  }
+  
+  f = as.formula(f)
+  model = bigglm.ffdf(f, data = train)
+  rsq = summary(model)$rsq
+  vif[k] = 1/(1-rsq)
+  
+}
+
+range(vif)
+```
+
+**Observations**
+
+1.  The range of VIF values clearly indicates that there is no multi-variable colliniearity amongst the features.
+2.  We now proceed to build a baseline learning model using the *train* dataset and the Logistic Regression alogrithm.
+  
+### Building the Logistic Regression Model
+
+```{r logit-model}
+# There is a bit of circus here to split the ffdf into a train and a test subset.
+# All relevant ff functions such as ffdfindexget() or subset.ff() will accept only positive indices i.e index = (-indx) is not a valid expression when used with these functions and therefore we are required to create two separate indices, one for the train subset and another for the test subset.
+
+# Because the train dataset is rather large in size, we need only 10% of it as a test subset, unlike the usual 25-30%
+
+set.seed(1970)
+indx.tst = sample(1:nrow(train), 0.1*nrow(train))
+indx.trn = 1:nrow(train)
+indx.trn = indx.trn[-indx.tst]
+
+# Setting up the glm formula
+p = ncol(train) - 1
+f = paste("target", "~", colnames(train)[1], sep = "")
+for (k in 2:p) {
+  f = paste(f, "+", colnames(train)[k], sep = "")
+}
+
+f = as.formula(f)
+
+# To use bigglm.ffdf() and predict.bigglm() but avoid making another copy of the train dataset, we use ffdfindexget(). However, ffindexget() requires the index vector as a ff_vector and we are required to convert the index vectors into ff_vectors
+
+indx.trn = ff(indx.trn)
+indx.tst = ff(indx.tst)
+
+model = bigglm.ffdf(f, data = ffdfindexget(train, indx.trn), family = binomial())
+
+prob = predict(model, newdata = ffdfindexget(train, indx.tst), type = "response")
+
+# The ROCR::prediction() function requires both the probs and labels as vectors (or matrices) and we have a bit of a circus to access the relevant values of train$target[indx.tst]. Note the repeated use of [] to access the required values as a vector
+
+labl = train[['target']][indx.tst[]]
+
+pred = prediction(prob, labl)
+perf = performance(pred, "auc")
+
+print(paste("The estimated Area Under the Curve (AUC) for the test subset = ", perf@y.values))
+
+```
+
+**Observation**
+
+1.  The Area Under the Curve for the test subset implies that the logistic regression model does slightly better than random guessing and is therefore not a particularly useful model.
+
+### EDA-2
+
+1.  We had previously noted that `wheezy.copper.turtle.magic` is the only feature which is `integer` in class and has small number of unique values (512) whereas all other features have very large number of unique values (25000+).
+2.  We investigate if `wheezy.copper.turtle.magic` impacts the dependent variable. To that end split the *train* dataset along the values of `wheezy.copper.turtle.magic` and calculate and plot the class distribution in the dependent variable for each subset.
+
+```{r eda-2-a}
+rm(eda.mat, indx.trn, indx.tst, model)
+gc()
+
+dat = train[, c("wheezy.copper.turtle.magic", "target")]
+dat = dat %>% group_by(wheezy.copper.turtle.magic) %>% summarise(Class.Prop = mean(target))
+dat %>% ggplot(aes(Class.Prop))+geom_histogram(bins = 100)+ 
+  xlab("Proportion of class =1")
+
+```
+
+*Observation*
+
+1.  The histogram confirms our suspicion that `wheezy.copper.turtle.magic` impacts the dependent variable. We find additional confirmation by plotting the qqplot for the proportions shown above.
+
+```{r eda-2-b}
+qqnorm(dat$Class.Prop, main = "Normal Q-Q Plot for Proportion of Class=1"); qqline(dat$Class.Prop)
+```
+
+*Observation*
+
+1.  The Q-Q plot provides strong proof that the *train* dataset is in fact a conglomeration of a number of smaller datasets; each smaller dataset has a different proportion of classes in the dependent variable.
+2.  We hypothise that **separate learning models for each train sub dataset would provide a significantly better fit than the single model earlier constructed for the entire train dataset.**
+
+### EDA-3
+
+1.  We had previously concluded, treating the entire *train* dataset as one, that there is no multi-collinearity amongst the features.
+2.  However, now that we have diagnosed that there are multiple subsets (indexed by `wheezy.copper.turtle.magic`), we want to explore if there is multi-collinearity amongst features of the individual subsets of the dataset.
+3.  To this end we use **Principal Component Analysis**. We select randomly 50 subsets (~10% of total number of subsets) of the *train* dataset and for each of these subsets look for how many principal components explain 90%, 95% and 99% of the variance
+
+```{r eda-3}
+set.seed(1970)
+subsets = sample(1:length(unique(train$wheezy.copper.turtle.magic[])), 50)
+pve.mat = matrix(rep(0, 50*4), ncol = 4)
+colnames(pve.mat) = c("subset", "90%", "95%", "99%")
+i = 1
+
+for (subset in subsets) {
+  dat = train[train$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame()
+  dat = subset(dat, select = -c(target, wheezy.copper.turtle.magic))  # Removing cols not required for PCA
+  
+  model = prcomp(dat, scale. = TRUE)
+  
+  pve = (model$sdev^2/sum(model$sdev^2)) %>% cumsum()                 # Percentage of variance explained
+  
+  pve.mat[i, "subset"] = subset
+  pve.mat[i, "90%"] = (which(pve < 0.90) %>% which.max())
+  pve.mat[i, "95%"] = (which(pve < 0.95) %>% which.max())
+  pve.mat[i, "99%"] = (which(pve < 0.99) %>% which.max())
+  i = i + 1
+ 
+}
+
+pve.mat %>% as_tibble()
+
+```
+
+*Observations*
+
+1.  The results of the PCA suggest that across randomly chosen 50 subsets, ~170 of the 255 principal components explain 90% of the variance in the data, ~200 of the 255 principal components explain 95% of the variance and ~235 of the 255 principal components explain 99% of the variance. This suggests significant multi-collinearity amongst features of the individual subsets of the dataset. **Any learning model developed would benefit from implementing dimensionality reduction.**
+
+### EDA-4
+
+1.  We confirm that the set of unique values for `wheezy.copper.turtle.magic` is the same for both the *train* and the *test* datasets
+
+```{r eda-4}
+rm(pve.mat)
+gc()
+
+setdiff(unique(train$wheezy.copper.turtle.magic)[], unique(test$wheezy.copper.turtle.magic)[])
+```
+
+**Observations**
+
+1.  `wheezy.copper.turtle.magic` has the same set of unique values for both the *train* and the *test* dataset and therefore can predict the `target` class for all *test* dataset examples by building models using subsets of the *train* dataset.
+
+### Setting up for Models
+
+1.  We will compare the performance of 3 learning models using **AUC** as the metric - Penalised Logistic Regression, Naive Bayes and Quadratic Discriminant Analysis.
+2.  For all the three models, we will build a separate learning model for each of the underlying subsets in the *train* dataset. We will also use PCA to reduce the dimensionality before fitting the model.
+3.  We compare the learning models for randomly chosen 50 subsets.
+
+```{r setup-for-models}
+subsets = unique(train$wheezy.copper.turtle.magic[])
+set.seed(1947)
+subsets = sample(1:length(subsets), 50)
+
+# Matrix to store the performace of the different learning methods for each subset
+model.perf = matrix(rep(0, 4*length(subsets)), ncol = 4)
+colnames(model.perf) = c("subset", "LR", "NB", "QDA")
+model.perf[, "subset"] = subsets
+
+```
+
+### Penalised Logistic Regression Models
+
+1.  We develop penalised logistic regression models for the randomly chosen 50 *train* data subsets. 
+2.  We use the *train-val-test* strategy to:
+  a.  determine the ideal number of principal components to use in building the model
+    iii.  PCA will deliver 255 principal components and we choose 25 values of principal components over the 
+          range  10-235 for the validation set.
+  b.  estimate the likely test Area Under the Curve metric
+
+```{r multiple-penalised-logit-models, warning=FALSE}
+comps = seq(10, 235, length.out = 25) %>% floor()
+xval.comps = matrix(rep(0, 2*length(subsets)), ncol = 2)
+colnames(xval.comps) = c("subset", "X-val number of prinicpal Components")
+xval.comps[, "subset"] = subsets
+test.auc = 0
+rows = 0
+
+for (subset in subsets) {
+  dat = train[train$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame()
+  y = dat$target
+  dat = subset(dat, select = -c(target, wheezy.copper.turtle.magic))
+
+  set.seed(subset)
+  indx = split(sample(1:nrow(dat)), f = c(rep("train", 6), rep("val", 2), rep("test", 2)))
+  
+  pca.out = prcomp(dat)
+  pve = (pca.out$sdev^2/sum(pca.out$sdev^2)) %>% cumsum()
+  dat = pca.out$x
+  
+  auc = rep(0, length(comps))   # Store the val-set auc for models with candidate number of principal components
+  j = 1       # initializing auc[]
+  for (comp in comps) {
+    set.seed(comp)
+    cv.out = cv.glmnet(dat[indx$train, 1:comp], y[indx$train], family = "binomial", nfolds = 5)
+    best.lambda = cv.out$lambda.min
+    model = glmnet(dat[indx$train, 1:comp], y[indx$train], family = "binomial", lambda = best.lambda)
+    
+    prob = predict(model, newx = dat[indx$val, 1:comp], type = "response")
+    pred = prediction(prob, y[indx$val])
+    auc[j] = performance(pred, "auc")@y.values %>% unlist()
+    j = j + 1
+  }
+  
+  best.comp = which.max(auc) %>% comps[.]
+  xval.comps[xval.comps[, "subset"] == subset, "X-val number of prinicpal Components"] = best.comp
+  
+  set.seed(best.comp)
+  cv.out = cv.glmnet(dat[-indx$test, 1:best.comp], y[-indx$test], family = "binomial", nfolds = 5)
+  best.lambda = cv.out$lambda.min
+  
+  model = glmnet(dat[-indx$test, 1:best.comp], y[-indx$test], family = "binomial", lambda = best.lambda)
+  prob = predict(model, newx = dat[indx$test, 1:best.comp], type = "response")
+  
+  pred = prediction(prob, y[indx$test])
+  perf = performance(pred, "auc")
+  perf = perf@y.values %>% unlist() %>% round(., 4)
+
+  model.perf[model.perf[, "subset"] == subset, "LR"] = perf
+
+  test.auc = test.auc + nrow(dat)*perf
+  rows = rows + nrow(dat)
+} 
+
+print(paste("The weighted estimated test AUC for the 50 subsets of train =", test.auc/rows))
+print("The number of x-validated number of principal components used to build the 50 models are")
+table(xval.comps[, "X-val number of prinicpal Components"])
+
+```
+
+*Observations*
+
+1.  The Penalised Logistic Regression models deliver a reasonable (0.7817) weighted estimated test AUC using a sample of 50 subsets of the *train* dataset.
+2.  For these 50 subsets, the cross-validated number of principal components to include in the model to deliver maximum AUC widely varies between 10 and 216 with a majority between 25 to 50. Given that there are totally 256 principal components and most models use about 50, we note that most of the data subsets must have colinearity between significant number of their features.
+
+### Naive Bayes Regression Models
+
+1.  We now develop Naive Bayes regression models for the same 50 subsets and use the *train-val-test* strategy as for the Penalised Logistic Regression models.
+
+```{r multiple-naive-bayes-models, warning=FALSE}
+test.auc = 0
+rows = 0
+
+for (subset in subsets) {
+  dat = train[train$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame()
+  y = dat$target
+  dat = subset(dat, select = -c(target, wheezy.copper.turtle.magic))
+
+  set.seed(subset)
+  indx = split(sample(1:nrow(dat)), f = c(rep("train", 6), rep("val", 2), rep("test", 2)))
+  
+  pca.out = prcomp(dat)
+  pve = (pca.out$sdev^2/sum(pca.out$sdev^2)) %>% cumsum()
+  dat = pca.out$x
+  
+  auc = rep(0, length(comps))   # Store the val-set auc for models with candidate number of principal components
+  j = 1       # initializing auc[]
+  for (comp in comps) {
+    model = naiveBayes(dat[indx$train, 1:comp], y[indx$train])
+    
+    prob = predict(model, newdata = dat[indx$val, 1:comp], type = "raw")[, "1"]
+    pred = prediction(prob, y[indx$val])
+    auc[j] = performance(pred, "auc")@y.values %>% unlist()
+    j = j + 1
+  }
+  
+  best.comp = which.max(auc) %>% comps[.]
+  xval.comps[xval.comps[, "subset"] == subset, "X-val number of prinicpal Components"] = best.comp  
+  set.seed(best.comp)
+  
+  model = naiveBayes(dat[-indx$test, 1:best.comp], y[-indx$test])
+  
+  prob = predict(model, newdata = dat[indx$test, 1:best.comp], type = "raw")[, "1"]
+  pred = prediction(prob, y[indx$test])
+  perf = performance(pred, "auc")
+  perf = perf@y.values %>% unlist() %>% round(., 4)
+
+  model.perf[model.perf[, "subset"] == subset, "NB"] = perf
+
+  test.auc = test.auc + nrow(dat)*perf
+  rows = rows + nrow(dat)
+} 
+
+print(paste("The weighted estimated test AUC for the 50 subsets of train =", test.auc/rows))
+print("The number of x-validated number of principal components used to build the 50 models are")
+table(xval.comps[, "X-val number of prinicpal Components"])
+
+```
+
+*Observations*
+
+1.  The collection of Naive Bayes models outperform the collection of the Penalised Regression models by a reasonable margin.
+2.  For the Naive Bayes models, the cross validated number of principal components used vary between 10 and 94 with the majority between 25 and 50.
+
+
+### QDA Regression Models
+
+1.  Finally, we develop Quadratic Discriminant Analysis models for the same 50 subsets and use the *train-val-test* strategy as for the Penalised Logistic Regression models.
+
+```{r multiple-qda-models, warning=FALSE}
+comps = seq(10, 235, length.out = 25) %>% floor()
+test.auc = 0
+rows = 0
+
+for (subset in subsets) {
+  dat = train[train$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame()
+  y = dat$target
+  dat = subset(dat, select = -c(target, wheezy.copper.turtle.magic))
+
+  set.seed(subset)
+  indx = split(sample(1:nrow(dat)), f = c(rep("train", 6), rep("val", 2), rep("test", 2)))
+  
+  pca.out = prcomp(dat)
+  pve = (pca.out$sdev^2/sum(pca.out$sdev^2)) %>% cumsum()
+  dat = pca.out$x
+  
+  auc = rep(0, length(comps))   # Store the val-set auc for models with candidate number of principal components
+  j = 1
+  for (comp in comps) {
+    model = qda(dat[indx$train, 1:comp], y[indx$train])
+    
+    prob = predict(model, newdata = dat[indx$val, 1:comp])$posterior[, "1"]
+    pred = prediction(prob, y[indx$val])
+    auc[j] = performance(pred, "auc")@y.values %>% unlist()
+    j = j + 1
+  }
+  
+  best.comp = which.max(auc) %>% comps[.]
+  xval.comps[xval.comps[, "subset"] == subset, "X-val number of prinicpal Components"] = best.comp  
+  set.seed(best.comp)
+  
+  model = qda(dat[-indx$test, 1:best.comp], y[-indx$test])
+  
+  prob = predict(model, newdata = dat[indx$test, 1:best.comp])$posterior[, "1"]
+  pred = prediction(prob, y[indx$test])
+  perf = performance(pred, "auc")
+  perf = perf@y.values %>% unlist() %>% round(., 4)
+
+  model.perf[model.perf[, "subset"] == subset, "QDA"] = perf
+
+  test.auc = test.auc + nrow(dat)*perf
+  rows = rows + nrow(dat)
+} 
+
+print(paste("The weighted estimated test AUC for the 50 subsets of train =", test.auc/rows))
+print("The number of x-validated number of principal components used to build the 50 models are")
+table(xval.comps[, "X-val number of prinicpal Components"])
+
+```
+
+*Observations*
+
+1.  The QDA requires a cross-validation interval for the principal components to use to be much smaller than that for the other two models. We therefore change the interval from 10-235 to 10-130 and re-develop the QDA models.
+
+```{r multiple-qda-models-redux, warning=FALSE}
+comps = seq(10, 130, length.out = 25) %>% floor()
+test.auc = 0
+rows = 0
+
+for (subset in subsets) {
+  dat = train[train$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame()
+  y = dat$target
+  dat = subset(dat, select = -c(target, wheezy.copper.turtle.magic))
+
+  set.seed(subset)
+  indx = split(sample(1:nrow(dat)), f = c(rep("train", 6), rep("val", 2), rep("test", 2)))
+  
+  pca.out = prcomp(dat)
+  pve = (pca.out$sdev^2/sum(pca.out$sdev^2)) %>% cumsum()
+  dat = pca.out$x
+  
+  auc = rep(0, length(comps))   # Store the val-set auc for models with candidate number of principal components
+  j = 1
+  for (comp in comps) {
+    model = qda(dat[indx$train, 1:comp], y[indx$train])
+    
+    prob = predict(model, newdata = dat[indx$val, 1:comp])$posterior[, "1"]
+    pred = prediction(prob, y[indx$val])
+    auc[j] = performance(pred, "auc")@y.values %>% unlist()
+    j = j + 1
+  }
+  
+  best.comp = which.max(auc) %>% comps[.]
+  xval.comps[xval.comps[, "subset"] == subset, "X-val number of prinicpal Components"] = best.comp  
+  set.seed(best.comp)
+  
+  model = qda(dat[-indx$test, 1:best.comp], y[-indx$test])
+  
+  prob = predict(model, newdata = dat[indx$test, 1:best.comp])$posterior[, "1"]
+  pred = prediction(prob, y[indx$test])
+  perf = performance(pred, "auc")
+  perf = perf@y.values %>% unlist() %>% round(., 4)
+
+  model.perf[model.perf[, "subset"] == subset, "QDA"] = perf
+
+  test.auc = test.auc + nrow(dat)*perf
+  rows = rows + nrow(dat)
+} 
+
+print(paste("The weighted estimated test AUC for the 50 subsets of train =", test.auc/rows))
+print("The number of x-validated number of principal components used to build the 50 models are")
+table(xval.comps[, "X-val number of prinicpal Components"])
+
+```
+
+*Observations*
+
+1.  The QDA models overall vastly outperform both the Penalised Logistic Regression models and the Naive Bayes models. Interestingly, the cross-validated number of components used vary in a very narrow range from 25 to 50.
+2.  We must investigate if the QDA model for every subset outperforms its peer Penalised Logistic Regression and Naive Bayes model.
+
+
+```{r best-model}
+model.perf = cbind(model.perf, best.model = apply(model.perf[, 2:4], 1, function(x){which.max(x) %>% names()}))
+model.perf[, "best.model"]
+
+```
+
+*Observations*
+
+1.  The QDA is the preferred model to use for all subsets of the *train* (and therefore for the *test*) dataset when making the predictions.
+
+<!-- ### Saving a baseline -->
+
+<!-- 1.  We save a baseline version for the important variables that will be required in further analysis. -->
+
+<!-- ```{r save-data} -->
+<!-- save.ffdf(train, dir = "../RDA/traindir", overwrite = TRUE) -->
+<!-- save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE) -->
+<!-- ffsave(test.id.val, file = paste(ffdir, "/test.id.val", sep = ""), rootpath = getOption("fftempdir")) -->
+
+<!-- ``` -->
