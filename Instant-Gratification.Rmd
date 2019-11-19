@@ -1,7 +1,7 @@
 ---
 title: "The Instant Gratification Challenge on Kaggle"
 author: "Sanjeev Gadre"
-date: "November 16, 2019"
+date: "November 19, 2019"
 output: html_document
 ---
 
@@ -536,13 +536,74 @@ model.perf[, "best.model"]
 
 1.  The QDA is the preferred model to use for all subsets of the *train* (and therefore for the *test*) dataset when making the predictions.
 
-<!-- ### Saving a baseline -->
+### Setup for Predictions
 
-<!-- 1.  We save a baseline version for the important variables that will be required in further analysis. -->
+1.  Get the setup for making and storing predictions.
 
-<!-- ```{r save-data} -->
-<!-- save.ffdf(train, dir = "../RDA/traindir", overwrite = TRUE) -->
-<!-- save.ffdf(test, dir = "../RDA/testdir", overwrite = TRUE) -->
-<!-- ffsave(test.id.val, file = paste(ffdir, "/test.id.val", sep = ""), rootpath = getOption("fftempdir")) -->
+```{r setup}
+subsets = unique(train$wheezy.copper.turtle.magic[])
+out = ffdf(id = test.id.val, key = test$wheezy.copper.turtle.magic, target = ff(rep(0, nrow(test))))
 
-<!-- ``` -->
+comps = 20:55
+
+```
+
+### QDA Regression Models
+
+1.  We will fit a QDA Model to every subset of *train* dataset. 
+2.  We use the *train-val* strategy to determine the optimal number of principal components to include in the final model for that subset.
+3.  Based on earlier analysis, we cross validate the number of principal compnents over the range 20-55.
+4.  We then predict the probability for class=1 for all *test* dataset observations for each particular subset.
+
+```{r multiple-qda-models, warning=FALSE}
+for (subset in subsets) {
+  dat = train[train$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame()
+  y = dat$target
+  dat = subset(dat, select = -c(wheezy.copper.turtle.magic, target)) 
+
+  set.seed(subset)
+  indx = sample(1:nrow(dat), 0.2*nrow(dat))
+  
+  pca.out = prcomp(dat)
+  dat = pca.out$x
+  
+  auc = rep(0, length(comps))   # Store the val-set auc for models with candidate number of principal components
+  j = 1
+  for (comp in comps) {
+    set.seed(comp)
+    model = qda(dat[-indx, 1:comp], y[-indx])
+    
+    prob = predict(model, newdata = dat[indx, 1:comp])$posterior[, "1"]
+    pred = prediction(prob, y[indx])
+    auc[j] = performance(pred, "auc")@y.values %>% unlist()
+    j = j + 1
+  }
+  
+  best.comp = which.max(auc) %>% comps[.]
+  
+  set.seed(best.comp)
+  model = qda(dat[, 1:best.comp], y)
+  
+  newdat = test[test$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame()
+  newdat = subset(newdat, select = -wheezy.copper.turtle.magic)
+  newdat = prcomp(newdat)
+  newdat = newdat$x[, 1:best.comp]
+  prob = predict(model, newdata = newdat)$posterior[, "1"]
+  out$target[out$key == subset] = ff(prob)
+
+} 
+
+```
+
+### Finalizing the output
+
+1.  Writing the output in the desired format.
+
+```{r preds-out}
+out = subset.ffdf(out, select = -key)
+out = data.frame(out)
+
+write.csv(out, file = "./data/out.csv", quote = FALSE, row.names = FALSE)
+
+```
+
