@@ -16,10 +16,7 @@ library(dplyr)
 library(ggplot2)
 library(ff)
 library(ffbase)
-#library(biglm)
 library(ROCR)
-#library(glmnet)
-#library(e1071)
 library(MASS)
 
 # Creating ffdir where ff objects can be stored and retrieved
@@ -64,15 +61,23 @@ comps = 20:55
 
 ```{r multiple-qda-models, warning=FALSE}
 for (subset in subsets) {
-  dat = train[train$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame()
+  dat = train[train$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame(.)
   y = dat$target
-  dat = subset(dat, select = -c(wheezy.copper.turtle.magic, target)) 
+  dat = subset(dat, select = -c(target, wheezy.copper.turtle.magic))
+  m = nrow(dat)
+  
+  newdat = test[test$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame(.) %>% 
+    subset(., select = -wheezy.copper.turtle.magic)
+  
+  # Combining peer subsets from the train and test datasets
+  dat = rbind(dat, newdat)
+  
+  pca.out = prcomp(dat) 
+  dat = pca.out$x[1:m, ]
+  newdat = pca.out$x[-(1:m), ]
 
   set.seed(subset)
   indx = sample(1:nrow(dat), 0.2*nrow(dat))
-  
-  pca.out = prcomp(dat)
-  dat = pca.out$x
   
   auc = rep(0, length(comps))   # Store the val-set auc for models with candidate number of principal components
   j = 1
@@ -91,10 +96,7 @@ for (subset in subsets) {
   set.seed(best.comp)
   model = qda(dat[, 1:best.comp], y)
   
-  newdat = test[test$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame()
-  newdat = subset(newdat, select = -wheezy.copper.turtle.magic)
-  newdat = prcomp(newdat)
-  newdat = newdat$x[, 1:best.comp]
+  newdat = newdat[, 1:best.comp]
   prob = predict(model, newdata = newdat)$posterior[, "1"]
   out$target[out$key == subset] = ff(prob)
 

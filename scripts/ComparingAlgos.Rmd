@@ -68,23 +68,30 @@ model.perf[, "subset"] = subsets
     iii.  PCA will deliver 255 principal components and we choose 25 values of principal components over the 
           range  10-235 for the validation set.
   b.  estimate the likely test Area Under the Curve metric
+3.  One important fact to bear in mind is that when we perform a PCA, we transform the data from one feature subspace to another. We need to always make sure that the *train* and *test* datasets are from the **same** feature subspace. Therefore, when applyin the PCA to a data subset, it is important to include **both** the relevant *train* and *test* datasets.
 
 ```{r multiple-penalised-logit-models, warning=FALSE}
 comps = seq(10, 235, length.out = 25) %>% floor()
+xval.comps = matrix(rep(0, 2*length(subsets)), ncol = 2)
+colnames(xval.comps) = c("subset", "X-val number of prinicpal Components")
+xval.comps[, "subset"] = subsets
 test.auc = 0
 rows = 0
 
 for (subset in subsets) {
-  dat = train[train$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame()
+  dat = train[train$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame(.)
   y = dat$target
   dat = subset(dat, select = -c(target, wheezy.copper.turtle.magic))
+  m = nrow(dat)
+  # Combining peer subsets from the train and test datasets
+  dat = test[test$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame(.) %>% 
+    subset(., select = -wheezy.copper.turtle.magic) %>% rbind(dat, .) 
+  
+  pca.out = prcomp(dat) 
+  dat = pca.out$x[1:m, ]
 
   set.seed(subset)
   indx = split(sample(1:nrow(dat)), f = c(rep("train", 6), rep("val", 2), rep("test", 2)))
-  
-  pca.out = prcomp(dat)
-  pve = (pca.out$sdev^2/sum(pca.out$sdev^2)) %>% cumsum()
-  dat = pca.out$x
   
   auc = rep(0, length(comps))   # Store the val-set auc for models with candidate number of principal components
   j = 1
@@ -101,8 +108,8 @@ for (subset in subsets) {
   }
   
   best.comp = which.max(auc) %>% comps[.]
-  print(paste("The cross-validated number of principal components to use for subset ", subset, "=", best.comp))
-  
+  xval.comps[xval.comps[, "subset"] == subset, "X-val number of prinicpal Components"] = best.comp
+
   set.seed(best.comp)
   cv.out = cv.glmnet(dat[-indx$test, 1:best.comp], y[-indx$test], family = "binomial", nfolds = 5)
   best.lambda = cv.out$lambda.min
@@ -122,33 +129,37 @@ for (subset in subsets) {
 
 writeLines("")
 print(paste("The weighted estimated test AUC for the 50 subsets of train =", test.auc/rows))
+print("The number of x-validated number of principal components used to build the 50 models are")
+table(xval.comps[, "X-val number of prinicpal Components"])
 
 ```
 
 *Observations*
-1.  The Penalised Logistic Regression models deliver a reasonable (0.7817) weighted estimated test AUC using a sample of 50 subsets of the *train* dataset.
-2.  For these 50 subsets, the cross-validated number of principal components to include in the model to deliver maximum AUC widely varies between 10 and 197 with a majority centered around 50. Given that there are totally 256 principal components and most models use about 50, we note that most of the data subsets must have colinearity between significant number of their features.  
+1.  The Penalised Logistic Regression models deliver a reasonable (0.7854) weighted estimated test AUC using a sample of 50 subsets of the *train* dataset.
+2.  For these 50 subsets, the cross-validated number of principal components to include in the model to deliver maximum AUC widely varies between 10 and 216 with a majority between 25 to 60. Given that there are totally 255 principal components and most models use under 60, we note that most of the data subsets must have colinearity between significant number of their features.  
 
 ### Naive Bayes Regression Models
 
 1.  We now develop Naive Bayes regression models for the same 50 subsets and use the *train-val-test* strategy as for the Penalised Logistic Regression models.
 
 ```{r multiple-naive-bayes-models, warning=FALSE}
-comps = seq(10, 235, length.out = 25) %>% floor()
 test.auc = 0
 rows = 0
 
 for (subset in subsets) {
-  dat = train[train$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame()
+  dat = train[train$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame(.)
   y = dat$target
   dat = subset(dat, select = -c(target, wheezy.copper.turtle.magic))
-
+  m = nrow(dat)
+  # Combining peer subsets from the train and test datasets
+  dat = test[test$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame(.) %>% 
+    subset(., select = -wheezy.copper.turtle.magic) %>% rbind(dat, .)
+  
+  pca.out = prcomp(dat) 
+  dat = pca.out$x[1:m, ]
+  
   set.seed(subset)
   indx = split(sample(1:nrow(dat)), f = c(rep("train", 6), rep("val", 2), rep("test", 2)))
-  
-  pca.out = prcomp(dat)
-  pve = (pca.out$sdev^2/sum(pca.out$sdev^2)) %>% cumsum()
-  dat = pca.out$x
   
   auc = rep(0, length(comps))   # Store the val-set auc for models with candidate number of principal components
   j = 1
@@ -162,10 +173,9 @@ for (subset in subsets) {
   }
   
   best.comp = which.max(auc) %>% comps[.]
-  print(paste("The cross-validated number of principal components to use for subset ", subset, "=", best.comp))
+  xval.comps[xval.comps[, "subset"] == subset, "X-val number of prinicpal Components"] = best.comp  
   
   set.seed(best.comp)
-  
   model = naiveBayes(dat[-indx$test, 1:best.comp], y[-indx$test])
   
   prob = predict(model, newdata = dat[indx$test, 1:best.comp], type = "raw")[, "1"]
@@ -181,34 +191,38 @@ for (subset in subsets) {
 
 writeLines("")
 print(paste("The weighted estimated test AUC for the 50 subsets of train =", test.auc/rows))
+print("The number of x-validated number of principal components used to build the 50 models are")
+table(xval.comps[, "X-val number of prinicpal Components"])
 
 ```
 
 *Observations*
 
-1.  The collection of Naive Bayes models outperform the collection of the Penalised Regression models.
-2.  For the Naive Bayes models, the cross validated number of principal components used vary between 10 and 56 with the majority around 40. In other words, the Naive Bayes models use even less number of principal components than the Penalised Regression models.
+1.  The collection of Naive Bayes models slightly outperforms (0.7901) the collection of the Penalised Regression models.
+2.  For the Naive Bayes models, the cross validated number of principal components used vary between 10 and 141 with the majority between 25 and 50.
 
 ### QDA Regression Models
 
 1.  Finally, we develop Quadratic Discriminant Analysis models for the same 50 subsets and use the *train-val-test* strategy as for the Penalised Logistic Regression models.
 
 ```{r multiple-qda-models, warning=FALSE}
-comps = seq(10, 235, length.out = 25) %>% floor()
 test.auc = 0
 rows = 0
 
 for (subset in subsets) {
-  dat = train[train$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame()
+  dat = train[train$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame(.)
   y = dat$target
   dat = subset(dat, select = -c(target, wheezy.copper.turtle.magic))
-
+  m = nrow(dat)
+  # Combining peer subsets from the train and test datasets
+  dat = test[test$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame(.) %>% 
+    subset(., select = -wheezy.copper.turtle.magic) %>% rbind(dat, .)
+  
+  pca.out = prcomp(dat) 
+  dat = pca.out$x[1:m, ]
+  
   set.seed(subset)
   indx = split(sample(1:nrow(dat)), f = c(rep("train", 6), rep("val", 2), rep("test", 2)))
-  
-  pca.out = prcomp(dat)
-  pve = (pca.out$sdev^2/sum(pca.out$sdev^2)) %>% cumsum()
-  dat = pca.out$x
   
   auc = rep(0, length(comps))   # Store the val-set auc for models with candidate number of principal components
   j = 1
@@ -222,10 +236,9 @@ for (subset in subsets) {
   }
   
   best.comp = which.max(auc) %>% comps[.]
-  print(paste("The cross-validated number of principal components to use for subset ", subset, "=", best.comp))
+  xval.comps[xval.comps[, "subset"] == subset, "X-val number of prinicpal Components"] = best.comp
   
   set.seed(best.comp)
-  
   model = qda(dat[-indx$test, 1:best.comp], y[-indx$test])
   
   prob = predict(model, newdata = dat[indx$test, 1:best.comp])$posterior[, "1"]
@@ -241,6 +254,8 @@ for (subset in subsets) {
 
 writeLines("")
 print(paste("The weighted estimated test AUC for the 50 subsets of train =", test.auc/rows))
+print("The number of x-validated number of principal components used to build the 50 models are")
+table(xval.comps[, "X-val number of prinicpal Components"])
 
 ```
 
@@ -256,16 +271,19 @@ test.auc = 0
 rows = 0
 
 for (subset in subsets) {
-  dat = train[train$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame()
+  dat = train[train$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame(.)
   y = dat$target
   dat = subset(dat, select = -c(target, wheezy.copper.turtle.magic))
-
+  m = nrow(dat)
+  # Combining peer subsets from the train and test datasets
+  dat = test[test$wheezy.copper.turtle.magic == subset, ] %>% as.data.frame(.) %>% 
+    subset(., select = -wheezy.copper.turtle.magic) %>% rbind(dat, .)
+  
+  pca.out = prcomp(dat) 
+  dat = pca.out$x[1:m, ]
+  
   set.seed(subset)
   indx = split(sample(1:nrow(dat)), f = c(rep("train", 6), rep("val", 2), rep("test", 2)))
-  
-  pca.out = prcomp(dat)
-  pve = (pca.out$sdev^2/sum(pca.out$sdev^2)) %>% cumsum()
-  dat = pca.out$x
   
   auc = rep(0, length(comps))   # Store the val-set auc for models with candidate number of principal components
   j = 1
@@ -279,7 +297,7 @@ for (subset in subsets) {
   }
   
   best.comp = which.max(auc) %>% comps[.]
-  print(paste("The cross-validated number of principal components to use for subset ", subset, "=", best.comp))
+  xval.comps[xval.comps[, "subset"] == subset, "X-val number of prinicpal Components"] = best.comp
   
   set.seed(best.comp)
   
@@ -298,6 +316,8 @@ for (subset in subsets) {
 
 writeLines("")
 print(paste("The weighted estimated test AUC for the 50 subsets of train =", test.auc/rows))
+print("The number of x-validated number of principal components used to build the 50 models are")
+table(xval.comps[, "X-val number of prinicpal Components"])
 
 ```
 
